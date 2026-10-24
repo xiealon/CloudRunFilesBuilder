@@ -1,0 +1,93 @@
+# 只构建本仓真正用到的包：clashoo 与 mosdns，各出 24.10(ipk) 与 25.12(apk) 两版 run。
+# 名称与 wkccd/CloudRunFilesBuilder 保持一致，ImageBuilder 那边换仓库地址即可直接接管。
+#
+# 触发改成白名单：任何 push 都跑会把 4 个 run 重打一遍（十几分钟），
+# 而镜像 / 存档那些提交跟构建无关。要重编就 push 一个 trigger-build.txt。
+name: build runs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'trigger-build.txt'
+      - '.github/workflows/build-runs.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: "0 19 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 makeself
+        run: git clone --depth=1 https://github.com/megastep/makeself.git /tmp/makeself
+
+      - name: 构建 clashoo（24.10 ipk / 25.12 apk）
+        run: |
+          set -eu
+          REL=$(curl -s https://api.github.com/repos/kenzok8/openwrt-clashoo/releases \
+                | jq -c '[.[]|select(.prerelease==false)]|sort_by(.published_at)|last')
+          pick() {
+            mkdir -p "$2"
+            echo "$REL" | jq -r --arg p "$1" '.assets[]|select(.name|test($p))|.browser_download_url' \
+              | while read -r u; do [ -n "$u" ] && wget -q "$u" -P "$2/"; done
+          }
+          pick '^clashoo_[0-9].*_x86_64\.ipk$'             out/clashoo-x86
+          pick '^luci-app-clashoo_.*_all\.ipk$'            out/clashoo-x86
+          pick '^luci-i18n-clashoo-zh-cn_.*_all\.ipk$'     out/clashoo-x86
+          pick '^clashoo-.*-x86_64\.apk$'                  out/clashoo25-x86
+          pick '^luci-app-clashoo-.*-x86_64\.apk$'         out/clashoo25-x86
+          pick '^luci-i18n-clashoo-zh-cn-.*-x86_64\.apk$'  out/clashoo25-x86
+          ls -l out/clashoo-x86 out/clashoo25-x86
+          V=$(ls out/clashoo-x86/clashoo_*_x86_64.ipk | head -n1 | grep -oE '[0-9]{4}\.[0-9]{2}\.[0-9]{2}')
+          echo "CLASHOO_VER=$V" >> "$GITHUB_ENV"
+          printf '#!/bin/sh\nopkg update || exit 1\nopkg install ./*.ipk\n'        > out/clashoo-x86/install.sh
+          printf '#!/bin/sh\napk update || exit 1\napk add --allow-untrusted ./*.apk\n' > out/clashoo25-x86/install.sh
+
+      - name: 构建 mosdns（24.10 ipk / 25.12 apk）
+        run: |
+          set -eu
+          TAG=$(curl -s https://api.github.com/repos/sbwml/luci-app-mosdns/releases/latest | jq -r .tag_name)
+          echo "MOSDNS_TAG=$TAG" >> "$GITHUB_ENV"
+          rm -rf /tmp/m24 /tmp/m25
+          mkdir -p /tmp/m24 /tmp/m25 out/mosdns-x86 out/mosdns25-x86
+          wget -q -O /tmp/m24.tgz https://github.com/sbwml/luci-app-mosdns/releases/latest/download/x86_64-openwrt-24.10.tar.gz
+          wget -q -O /tmp/m25.tgz https://github.com/sbwml/luci-app-mosdns/releases/latest/download/x86_64-openwrt-25.12.tar.gz
+          tar -xzf /tmp/m24.tgz -C /tmp/m24
+          tar -xzf /tmp/m25.tgz -C /tmp/m25
+          find /tmp/m24 -name '*.ipk' -exec cp {} out/mosdns-x86/ \;
+          find /tmp/m25 -name '*.apk' -exec cp {} out/mosdns25-x86/ \;
+          for f in out/mosdns-x86/*~* out/mosdns25-x86/*~*; do
+            [ -e "$f" ] || continue
+            mv "$f" "$(echo "$f" | tr -d '~')"
+          done
+          ls -l out/mosdns-x86 out/mosdns25-x86
+          printf '#!/bin/sh\nopkg update || exit 1\nopkg install ./*.ipk\n'        > out/mosdns-x86/install.sh
+          printf '#!/bin/sh\napk update || exit 1\napk add --allow-untrusted ./*.apk\n' > out/mosdns25-x86/install.sh
+
+      - name: 打包成 run
+        run: |
+          set -eu
+          cd /tmp/makeself
+          G="$GITHUB_WORKSPACE"
+          ./makeself.sh "$G/out/clashoo-x86"   "$G/out/clashoo_${CLASHOO_VER}_x86_64.run"    "clashoo"   ./install.sh
+          ./makeself.sh "$G/out/clashoo25-x86" "$G/out/25-clashoo_${CLASHOO_VER}_x86_64.run" "clashoo25" ./install.sh
+          ./makeself.sh "$G/out/mosdns-x86"    "$G/out/mosdns_${MOSDNS_TAG}_x86_64.run"    "mosdns"    ./install.sh
+          ./makeself.sh "$G/out/mosdns25-x86"  "$G/out/25-mosdns_${MOSDNS_TAG}_x86_64.run"  "mosdns25"  ./install.sh
+          ls -lh "$G"/out/*.run
+
+      - name: 发布 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          TAG=$(TZ=Asia/Shanghai date +%F)
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "runs $TAG" \
+              --notes "clashoo ${CLASHOO_VER} / mosdns ${MOSDNS_TAG}（x86_64；24.10 用 ipk 版，25.12 用 25- 前缀 apk 版）"
+          gh release upload "$TAG" out/*.run --clobber
