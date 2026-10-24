@@ -21,7 +21,9 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      max-parallel: 5
+      # 串行：第一批 5 个并发 push 到同一仓库全成功，第二批 6 个全失败，
+      # 基本确定是同时写同一个 git 仓库撞了锁。反正总共才几百 MB，慢就慢点。
+      max-parallel: 1
       matrix:
         repo:
           - small
@@ -53,5 +55,7 @@ jobs:
           echo "== 默认分支 $DEF  HEAD $SHA"
           echo "== 文件数 $(git ls-tree -r --name-only HEAD | wc -l)"
           echo "== push 到 ${GITHUB_REPOSITORY}:refs/heads/${SRC_REPO}"
-          git push "$DST" "HEAD:refs/heads/${SRC_REPO}"
+          git push "$DST" "HEAD:refs/heads/${SRC_REPO}" \
+            || { echo "  第一次失败，10 秒后重试"; sleep 10; git push "$DST" "HEAD:refs/heads/${SRC_REPO}"; } \
+            || { echo "  第二次失败，30 秒后重试"; sleep 30; git push "$DST" "HEAD:refs/heads/${SRC_REPO}"; }
           echo "== 完成：分支 ${SRC_REPO} 指向 $SHA"
