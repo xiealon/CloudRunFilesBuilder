@@ -1,0 +1,159 @@
+name: Build Crowdsec LXC Tarball (CloudRunFilesBuilder)
+
+# 【2026-10-25 迁入】原 xiealon/Crowdsec-LXC 仓库已并入本仓库，release 也搬到这里：
+#   https://github.com/xiealon/CloudRunFilesBuilder/releases/tag/lxc-latest
+# 触发：gh workflow run build-lxc-tarball.yml --repo xiealon/CloudRunFilesBuilder --ref master
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "主仓 ref（分支/标签/commit）"
+        required: false
+        default: "master"
+        type: string
+# 【CrowdSec 版本】留空 = 每次构建装 packagecloud 当前最新。
+# 主仓 build-x86-64-*.yml 里的同名变量也留空（不比对版本），语义一致：跟随最新。
+# 想钉死某版：这里填 "1.8.1" 这类版本号，主仓那行一起填（否则主仓的版本闸门会跳过预构建）。
+# 实际装到的版本会写进 MANIFEST.json 的 crowdsec_version，主仓构建再把它抄进固件的 Release 说明。
+env:
+  CROWDSEC_VERSION: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lxc-tarball
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout definition repo (single source of truth)
+        uses: actions/checkout@v4
+        with:
+          repository: xiealon/ImmortalWrt-ImageBuilder
+          ref: ${{ inputs.source_ref || 'master' }}
+          path: src
+          fetch-depth: 0
+
+      - name: Show inputs
+        run: |
+          set -eux
+          cd src
+          echo "source_ref=${{ inputs.source_ref || 'master' }}"
+          echo "source_sha=$(git rev-parse HEAD)"
+          echo "crowdsec_version=${CROWDSEC_VERSION:-<empty=latest>}"
+          echo "--- rootfs-skel/etc/crowdsec-net.conf ---"
+          cat rootfs-skel/etc/crowdsec-net.conf
+
+      - name: Pin crowdsec version
+        run: |
+          set -euo pipefail
+          if [ -z "${CROWDSEC_VERSION:-}" ]; then
+            echo "未锁版本：本次安装 packagecloud 最新 crowdsec"
+            exit 0
+          fi
+          sudo mkdir -p /etc/apt/preferences.d
+          printf 'Package: crowdsec\nPin: version %s*\nPin-Priority: 1001\n' "$CROWDSEC_VERSION" \
+            | sudo tee /etc/apt/preferences.d/crowdsec-pin >/dev/null
+          echo "--- /etc/apt/preferences.d/crowdsec-pin ---"
+          cat /etc/apt/preferences.d/crowdsec-pin
+
+      - name: Build tarball
+        run: |
+          set -eux
+          cd src
+          chmod +x shell/prepare-crowdsec-minimal.sh
+          sudo -n env bash shell/prepare-crowdsec-minimal.sh
+          ls -lh files/etc/crowdsec/lxc-crowdsec.tar.gz
+
+      - name: Collect facts, verify version, write MANIFEST
+        run: |
+          set -eux
+          cd src
+          REQ="${CROWDSEC_VERSION:-}"
+          SRC_SHA="$(git rev-parse HEAD)"
+          SRC_SHORT="$(git rev-parse --short=7 HEAD)"
+          OUT="files/etc/crowdsec/lxc-crowdsec.tar.gz"
+          SCRIPT_SHA="$(sha256sum shell/prepare-crowdsec-minimal.sh | awk '{print $1}')"
+          SKEL_SHA="$(find rootfs-skel -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          NET_CONF="$(grep -vE '^\s*#|^\s*$' rootfs-skel/etc/crowdsec-net.conf | tr '\n' ' ' || true)"
+          DEB="$(ls /tmp/lxc-crowdsec-minimal/crowdsec_*.deb 2>/dev/null | head -1 || true)"
+          if [ -n "$DEB" ]; then
+            CS_VER="$(basename "$DEB" | sed -E 's/^crowdsec_(.+)_[a-z0-9]+\.deb$/\1/')"
+          else
+            CS_VER="$(apt-cache policy crowdsec 2>/dev/null | awk '/Candidate:/{print $2; exit}')"
+          fi
+          case "$CS_VER" in ""|"(none)") CS_VER="unknown" ;; esac
+          echo "实际 crowdsec 版本：$CS_VER（deb=${DEB:-无}）"
+          if [ -n "$REQ" ]; then
+            case "$CS_VER" in
+              "$REQ"|"$REQ"-*|"$REQ"~*|"$REQ"+*)
+                echo "版本校验通过：要求 $REQ，实际 $CS_VER" ;;
+              *)
+                echo "::error::版本校验失败：要求 $REQ，实际 $CS_VER —— pin 未命中，拒绝发布"
+                exit 1 ;;
+            esac
+          else
+            echo "未锁版本，跟随 packagecloud 最新"
+          fi
+          BB_URL="$(grep -oE 'https://[^"}[:space:]]*busybox[^"}[:space:]]*' shell/prepare-crowdsec-minimal.sh | head -1 || true)"
+          T_SHA="$(sha256sum "$OUT" | awk '{print $1}')"
+          T_SIZE="$(stat -c %s "$OUT")"
+          T_ENTRIES="$(tar -tzf "$OUT" | wc -l)"
+          TOC_SHA="$(tar -tzvf "$OUT" | awk '{OFS=" "; $4=""; $5=""; print}' | sort | sha256sum | awk '{print $1}')"
+          cat > MANIFEST.json <<EOF
+          {
+            "schema": 1,
+            "source_repo": "xiealon/ImmortalWrt-ImageBuilder",
+            "source_ref": "${{ inputs.source_ref || 'master' }}",
+            "source_sha": "$SRC_SHA",
+            "source_short": "$SRC_SHORT",
+            "prepare_script_sha256": "$SCRIPT_SHA",
+            "rootfs_skel_sha256": "$SKEL_SHA",
+            "net_conf": "$NET_CONF",
+            "crowdsec_version": "$CS_VER",
+            "crowdsec_version_requested": "$REQ",
+            "crowdsec_deb": "$DEB",
+            "busybox_url": "$BB_URL",
+            "tarball_name": "lxc-crowdsec.tar.gz",
+            "tarball_sha256": "$T_SHA",
+            "tarball_toc_sha256": "$TOC_SHA",
+            "tarball_size": $T_SIZE,
+            "tarball_entries": $T_ENTRIES,
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "runner": "${{ runner.os }}-${{ runner.arch }}",
+            "workflow_run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          cat MANIFEST.json
+          echo "::notice::crowdsec=$CS_VER (lock=${REQ:-latest}) tarball_sha256=$T_SHA toc=$TOC_SHA entries=$T_ENTRIES"
+
+      - name: Publish to Release (exact tag + rolling latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eux
+          cd src
+          SRC_SHORT="$(git rev-parse --short=7 HEAD)"
+          TAG="lxc-${SRC_SHORT}"
+          ASSETS="files/etc/crowdsec/lxc-crowdsec.tar.gz MANIFEST.json"
+          echo "发布到 $GH_REPO，tag=$TAG"
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "release $TAG 已存在，覆盖资产"
+          else
+            gh release create "$TAG" --repo "$GH_REPO" --title "Crowdsec LXC tarball ($SRC_SHORT)" \
+              --notes "源：xiealon/ImmortalWrt-ImageBuilder@$SRC_SHORT；crowdsec ${CROWDSEC_VERSION:-latest}；详细指纹见 MANIFEST.json"
+          fi
+          gh release upload "$TAG" $ASSETS --repo "$GH_REPO" --clobber
+          if gh release view lxc-latest --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "lxc-latest 已存在，覆盖资产"
+          else
+            gh release create lxc-latest --repo "$GH_REPO" --title "Crowdsec LXC tarball (rolling latest)" \
+              --notes "滚动别名，内容等同最近一次构建的 lxc-<sha>；版本由构建时 CROWDSEC_VERSION 决定"
+          fi
+          gh release upload lxc-latest $ASSETS --repo "$GH_REPO" --clobber
+          gh release view "$TAG" --repo "$GH_REPO" --json tagName,assets -q '.tagName, (.assets[] | "  \(.name)  \(.size)")'
