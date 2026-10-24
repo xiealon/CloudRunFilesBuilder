@@ -43,7 +43,7 @@ jobs:
           if [ -z "${STAG}" ]; then
             STAG=$(gh api "repos/${SRC}/releases/latest" --jq .tag_name)
           fi
-          echo "src=${SRC}@${STAG}  dst=${DTAG}  excl=${EXCL}"
+          echo "repo=${GITHUB_REPOSITORY}  src=${SRC}@${STAG}  dst=${DTAG}  excl=${EXCL}"
 
           gh api "repos/${SRC}/releases/tags/${STAG}" --jq '.assets[].name' | sort > /tmp/all.txt
           gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${DTAG}" --jq '.assets[].name' | sort > /tmp/have.txt
@@ -72,7 +72,7 @@ jobs:
             if gh release download "${STAG}" -R "${SRC}" -p "$n" -D dl --clobber; then
               sz=$(stat -c%s "dl/$n")
               echo "downloaded ${n} = ${sz} bytes"
-              if gh release upload "${DTAG}" "dl/$n" --clobber; then
+              if gh release upload "${DTAG}" "dl/$n" -R "${GITHUB_REPOSITORY}" --clobber; then
                 echo "uploaded ${n}"
                 ok=$((ok+1))
               else
