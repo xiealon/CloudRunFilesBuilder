@@ -128,7 +128,30 @@ jobs:
           tag_name: ${{ env.LATEST_TAG }}
           name: "mosdns-${{ env.LATEST_TAG }}"
           files: makeself/mosdns_*.run
+          make_latest: false
           body_path: ${{ github.workspace }}/common.md
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---- 固定文件名发布：供 ImmortalWrt-ImageBuilder 直链拉取 ----
+      - name: Publish fixed-name copy to extra
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SRC_FILE="mosdns_*_x86_64.run"
+          SRC=$(ls -1 makeself/$SRC_FILE 2>/dev/null | head -n1)
+          if [ -z "$SRC" ]; then
+            echo "::error::找不到 $SRC_FILE"; exit 1
+          fi
+          cp "$SRC" /tmp/mosdns_x86_64.run
+          if ! gh release view extra -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create extra -R "$GITHUB_REPOSITORY" \
+              --title "Extra Packages (fixed filenames)" \
+              --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" \
+              --latest=false
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/tags/extra" -f make_latest=false >/dev/null || true
+          fi
+          gh release upload extra "/tmp/mosdns_x86_64.run" -R "$GITHUB_REPOSITORY" --clobber
+          echo "✅ published mosdns_x86_64.run = $(stat -c%s /tmp/mosdns_x86_64.run) bytes (from $SRC)"
