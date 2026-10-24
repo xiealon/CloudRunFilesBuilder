@@ -32,26 +32,16 @@ jobs:
           if ! gh release view extra -R "$R" >/dev/null 2>&1; then
             gh release create extra -R "$R" \
               --title "Extra Packages (fixed filenames)" \
-              --notes "固定文件名的 .run 包，供 ImmortalWrt-ImageBuilder 的 shell/prepare-packages.sh 直链下载。
-
-| 文件 | 说明 |
-| --- | --- |
-| \`clashoo_x86_64.run\` | 由 Build clashoo workflow 每次构建后覆盖 |
-| \`mosdns_x86_64.run\` | 由 Make MosDNS workflow 每次构建后覆盖 |
-
-直链格式：
-\`\`\`
-https://github.com/$R/releases/download/extra/<name>
-\`\`\`" \
+              --notes "Fixed-name .run assets consumed directly by ImmortalWrt-ImageBuilder shell/prepare-packages.sh. Overwritten on every build." \
               --latest=false
           fi
-          # 确保永不当 latest（避免抢 prepare-packages.sh 之外的 releases/latest 语义）
           gh api -X PATCH "repos/$R/releases/tags/extra" -f make_latest=false >/dev/null || true
 
           mkdir -p dl
           IFS=',' read -ra ITEMS <<< "$MAP"
           for it in "${ITEMS[@]}"; do
-            src="${it%%:*}"; dst="${it##*:}"
+            src="${it%%:*}"
+            dst="${it##*:}"
             [ -z "$src" ] && continue
             echo "::group::$src -> $dst"
             gh release download "$SRC_TAG" -R "$R" -p "$src" -D dl --clobber
@@ -62,6 +52,5 @@ https://github.com/$R/releases/download/extra/<name>
             echo "::endgroup::"
           done
 
-          echo "### extra 当前资产" >> "$GITHUB_STEP_SUMMARY"
-          gh api "repos/$R/releases/tags/extra" \
-            --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
+          echo "### extra assets" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$R/releases/tags/extra" --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
