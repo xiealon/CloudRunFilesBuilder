@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
       
       - name: Fetch latest release tag from nikki
         id: fetch_latest_tag
@@ -118,7 +118,7 @@ jobs:
           cat ${{ github.workspace }}/info.md
 
       - name: Generate new tag & release
-        uses: softprops/action-gh-release@v2.1.0
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -128,7 +128,7 @@ jobs:
           body_path: ${{ github.workspace }}/info.md
 
       - name: Upload run files as release assets
-        uses: softprops/action-gh-release@v2.1.0
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.LATEST_TAG }}
           name: "nikki-${{ env.LATEST_TAG }}"

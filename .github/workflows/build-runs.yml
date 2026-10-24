@@ -22,7 +22,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: 准备 makeself
         run: git clone --depth=1 https://github.com/megastep/makeself.git /tmp/makeself

@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: Checkout definition repo (single source of truth)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: xiealon/ImmortalWrt-ImageBuilder
           ref: ${{ inputs.source_ref || 'master' }}
