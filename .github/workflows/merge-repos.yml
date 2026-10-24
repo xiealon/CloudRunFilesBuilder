@@ -1,0 +1,57 @@
+name: merge old repos as branches
+
+# 把几个零散的老仓库各自搬成本仓库的一个分支（分支名 = 仓库名），
+# 搬完之后那些仓库就能删了，东西全在这里。
+#
+# 只搬非 fork、且已经不再更新的那些（包仓库、备份之类）；
+# ImmortalWrt-ImageBuilder / -BACKUP / -BACKWAN / Crowdsec-LXC 这些还在用的不动。
+#
+# 做法是最朴素的 clone --bare + push 一个新分支：分支历史与原仓库完全一致，
+# 不重写、不 squash，所以随时能拿分支内容还原出原来的整个仓库。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        repo:
+          - small
+          - small-package
+          - openwrt-package
+          - openwrt-packages
+          - openwrt-packagesa
+          - istore
+          - istorerecourse
+          - Spare-All
+          - Share-SSR-V2ray
+          - OPENWrt_Build
+          - CloudRunFilesBuilder-old
+    steps:
+      - name: 搬 ${{ matrix.repo }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SRC_REPO: ${{ matrix.repo }}
+        run: |
+          set -eu
+          SRC="https://github.com/xiealon/${SRC_REPO}.git"
+          DST="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          rm -rf /tmp/s.git
+          echo "== clone $SRC"
+          git clone --bare --no-tags "$SRC" /tmp/s.git
+          cd /tmp/s.git
+          DEF=$(git symbolic-ref --short HEAD || echo master)
+          SHA=$(git rev-parse HEAD)
+          echo "== 默认分支 $DEF  HEAD $SHA"
+          echo "== 文件数 $(git ls-tree -r --name-only HEAD | wc -l)"
+          echo "== push 到 ${GITHUB_REPOSITORY}:refs/heads/${SRC_REPO}"
+          git push "$DST" "HEAD:refs/heads/${SRC_REPO}"
+          echo "== 完成：分支 ${SRC_REPO} 指向 $SHA"
