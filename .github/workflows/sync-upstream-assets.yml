@@ -1,0 +1,93 @@
+name: Sync Upstream Release Assets
+# 从上游仓库的 release 补齐本仓 release 缺少的 .run 资产（只补缺，不覆盖）
+on:
+  workflow_dispatch:
+    inputs:
+      src_repo:
+        description: 上游仓库
+        default: wkccd/CloudRunFilesBuilder
+        required: true
+      src_tag:
+        description: 上游 tag（留空=latest）
+        default: ''
+        required: false
+      dst_tag:
+        description: 本仓目标 tag
+        default: mirror-2026-10-23
+        required: true
+      exclude:
+        description: 文件名前缀排除（本仓已有更新版本时用）
+        default: 'clashoo_2026.10.21_'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-assets
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync missing assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SRC: ${{ inputs.src_repo }}
+          STAG: ${{ inputs.src_tag }}
+          DTAG: ${{ inputs.dst_tag }}
+          EXCL: ${{ inputs.exclude }}
+        run: |
+          set -uo pipefail
+          if [ -z "${STAG}" ]; then
+            STAG=$(gh api "repos/${SRC}/releases/latest" --jq .tag_name)
+          fi
+          echo "src=${SRC}@${STAG}  dst=${DTAG}  excl=${EXCL}"
+
+          gh api "repos/${SRC}/releases/tags/${STAG}" --jq '.assets[].name' | sort > /tmp/all.txt
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${DTAG}" --jq '.assets[].name' | sort > /tmp/have.txt
+          echo "上游 $(wc -l < /tmp/all.txt) 项，本仓 $(wc -l < /tmp/have.txt) 项"
+
+          comm -23 /tmp/all.txt /tmp/have.txt > /tmp/need.txt
+          if [ -n "${EXCL}" ]; then
+            grep -vF "${EXCL}" /tmp/need.txt > /tmp/need2.txt
+            mv /tmp/need2.txt /tmp/need.txt
+          fi
+
+          echo "### 待补 $(wc -l < /tmp/need.txt) 个"
+          cat /tmp/need.txt
+          if [ -s /tmp/need.txt ]; then
+            echo "| 资产 |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| --- |" >> "$GITHUB_STEP_SUMMARY"
+            sed 's/^/| /; s/$/ |/' /tmp/need.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          mkdir -p dl
+          ok=0
+          fail=0
+          while IFS= read -r n; do
+            [ -z "$n" ] && continue
+            echo "::group::${n}"
+            if gh release download "${STAG}" -R "${SRC}" -p "$n" -D dl --clobber; then
+              sz=$(stat -c%s "dl/$n")
+              echo "downloaded ${n} = ${sz} bytes"
+              if gh release upload "${DTAG}" "dl/$n" --clobber; then
+                echo "uploaded ${n}"
+                ok=$((ok+1))
+              else
+                echo "::error::upload failed: ${n}"
+                fail=$((fail+1))
+              fi
+              rm -f "dl/$n"
+            else
+              echo "::error::download failed: ${n}"
+              fail=$((fail+1))
+            fi
+            echo "::endgroup::"
+          done < /tmp/need.txt
+
+          echo "成功 ${ok}，失败 ${fail}"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${DTAG}" --jq '.assets|length' \
+            | sed 's/^/完成后资产数: /'
+          [ "${fail}" -eq 0 ] || exit 1
