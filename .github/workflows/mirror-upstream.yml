@@ -1,0 +1,84 @@
+name: mirror upstream runs
+
+# 把 wkccd/CloudRunFilesBuilder 最新 release 的 68 个 .run 原样搬到本仓库。
+#
+# 前两版都没搬完：第一版 gh release upload 一次传全部，传了 5 个就断了；
+# 第二版改成循环，可日志取不到（MCP 没有读 Actions 日志的能力），不知道卡哪。
+# 这版逐文件「下载→上传→删掉」，单个失败只记一行不中断，最后把日志贴到 issue #1。
+
+on:
+  push:
+    paths:
+      - 'mirror-trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 逐个搬运
+        run: |
+          set -u
+          L="$GITHUB_WORKSPACE/mirror-log.txt"
+          : > "$L"
+          echo "start $(date -u +%FT%TZ) arch=$(uname -m)" >> "$L"
+          gh --version | head -1 >> "$L" 2>&1
+
+          TAG=$(gh api repos/wkccd/CloudRunFilesBuilder/releases/latest --jq .tag_name 2>>"$L")
+          echo "上游 tag = [$TAG]" >> "$L"
+          [ -z "$TAG" ] && { echo "没拿到 tag" >> "$L"; exit 1; }
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+          NEW="mirror-$TAG"
+          gh release create "$NEW" --title "mirror $TAG" \
+            --notes "从 wkccd/CloudRunFilesBuilder 的 $TAG 原样镜像。" \
+            >> "$L" 2>&1 || echo "release 已存在，继续补传" >> "$L"
+
+          gh api "repos/wkccd/CloudRunFilesBuilder/releases/tags/$TAG" \
+            --jq '.assets[]|.name+"\t"+.browser_download_url' > list.txt 2>>"$L"
+          echo "清单 $(wc -l < list.txt) 行" >> "$L"
+
+          mkdir -p dl
+          i=0
+          ok=0
+          bad=0
+          while IFS="$(printf '\t')" read -r name url; do
+            i=$((i + 1))
+            if ! curl -fsSL --retry 3 --retry-delay 2 -o "dl/$name" "$url" 2>>"$L"; then
+              echo "$i DLFAIL $name" >> "$L"
+              bad=$((bad + 1))
+              continue
+            fi
+            if gh release upload "$NEW" "dl/$name" --clobber >> "$L" 2>&1; then
+              echo "$i OK $name $(stat -c %s "dl/$name")" >> "$L"
+              ok=$((ok + 1))
+            else
+              echo "$i UPFAIL $name" >> "$L"
+              bad=$((bad + 1))
+            fi
+            rm -f "dl/$name"
+          done < list.txt
+
+          echo "== 成功 $ok 失败 $bad / 共 $i" >> "$L"
+          echo "== 远端资产 $(gh release view "$NEW" --json assets --jq '.assets|length' 2>>"$L")" >> "$L"
+          echo "end $(date -u +%FT%TZ)" >> "$L"
+
+      - name: 贴日志
+        if: always()
+        continue-on-error: true
+        run: |
+          set -u
+          [ -f mirror-log.txt ] || echo "居然没有 mirror-log.txt" > mirror-log.txt
+          echo "===== mirror-log ====="
+          cat mirror-log.txt
+          # 本仓库有 issue #1 就顺手贴一份；没有就算了，日志上面已经打到 run 里
+          gh issue comment 1 --repo "$GITHUB_REPOSITORY" --body-file mirror-log.txt || true
