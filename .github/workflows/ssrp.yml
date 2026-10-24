@@ -183,6 +183,48 @@ jobs:
           echo "查看x86_64目录"
           ls x86_64/
 
+      - name: Download SSR Plus IPKs by ARCH
+        run: |
+          download_for_arch () {
+            ARCH="$1"          # x86_64 或 aarch64_generic
+            SAVE_DIR="$2"      # x86_64 或 a53
+
+            BASE_URL="https://opkg.cooluc.com/openwrt-24.10/${ARCH}/"
+
+            echo "📦 Source: $BASE_URL"
+            echo "📁 Save to: $SAVE_DIR"
+
+            fetch_and_download() {
+              KEYWORD="$1"
+
+              IPK_FILE=$(curl -fsSL "$BASE_URL" \
+                | grep -oE "${KEYWORD}[^\"']+\.ipk" \
+                | sort -V | tail -n1)
+
+              if [ -z "$IPK_FILE" ]; then
+                echo "❌ Cannot find $KEYWORD for $ARCH"
+                exit 1
+              fi
+
+              FULL_URL="${BASE_URL}${IPK_FILE}"
+              SAFE_NAME=$(echo "$IPK_FILE" | tr '~' '-')
+
+              echo "⬇️ $SAFE_NAME"
+              wget -q --show-progress -O "${SAVE_DIR}/${SAFE_NAME}" "$FULL_URL"
+            }
+
+            fetch_and_download "luci-app-ssr-plus"
+            fetch_and_download "luci-i18n-ssr-plus-zh-cn"
+
+            echo "✅ Done for $ARCH"
+            echo
+          }
+          
+          download_for_arch "x86_64" "x86_64"
+          download_for_arch "aarch64_generic" "a53"
+          
+
+
       - name: Parse version from filename
         id: setver
         run: |
@@ -201,8 +243,34 @@ jobs:
       - name: Create install.sh 
         run: |
             echo -e "#!/bin/sh\n\nopkg update\nif [ \$? -ne 0 ]; then\n    echo \"update failed\"\n    exit 1\nfi\nopkg install depends/*.ipk --force-depends\nopkg install *.ipk --force-depends" > x86_64/install.sh
+            echo -e "\n# install mihomo core\nif [ -f mihomo.gz ]; then\n  echo \"Installing mihomo core...\"\n  gzip -dc mihomo.gz > /usr/bin/mihomo || exit 1\n  chmod +x /usr/bin/mihomo\nfi" >> x86_64/install.sh
             chmod +x x86_64/install.sh
             cp x86_64/install.sh a53/
+
+      - name: Download mihomo Core
+        run: |
+          download_mihomo () {
+          URL="$1"
+          SAVE_DIR="$2"
+
+          echo "Downloading mihomo to $SAVE_DIR ..."
+          wget -q --show-progress -O "${SAVE_DIR}/mihomo.gz" "$URL"
+          echo
+          }
+
+          download_mihomo \
+          "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-linux-amd64-compatible-v1.19.24.gz" \
+          "x86_64"
+
+          download_mihomo \
+          "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-linux-arm64-v1.19.24.gz" \
+          "a53"
+
+          echo "查看a53目录"
+          ls a53/
+          echo "查看x86_64目录"
+          ls x86_64/
+
 
       - name: Clone makeself repo
         run: |
@@ -219,8 +287,8 @@ jobs:
       - name: Create self-extracting archives
         run: |
             cd makeself
-            ./makeself.sh x86_64/ ssrp_x86_64-${ssrp_version}.run "by github action" ./install.sh
-            ./makeself.sh a53/ ssrp_aarch64_cortex-a53-${ssrp_version}.run "by github action" ./install.sh
+            ./makeself.sh x86_64/ ssrp_mihomo_x86_64-${ssrp_version}.run "by github action" ./install.sh
+            ./makeself.sh a53/ ssrp_mihomo_aarch64_cortex-a53-${ssrp_version}.run "by github action" ./install.sh
                 
       
       - name: Set tag name

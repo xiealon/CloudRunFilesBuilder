@@ -22,7 +22,7 @@ jobs:
       - name: Fetch latest release tag from mosdns
         id: fetch_latest_tag
         run: |
-          latest_tag=$(curl -sk https://api.github.com/repos/sbwml/luci-app-mosdns/releases | grep "tag_name" | grep v5 | head -n 1 | awk -F ":" '{print $2}' | sed 's/\"//g;s/,//;s/ //')
+          latest_tag=$(curl -sk https://api.github.com/repos/sbwml/luci-app-mosdns/releases/latest | jq -r '.tag_name')
           echo "LATEST_TAG=$latest_tag" >> $GITHUB_ENV
        
 

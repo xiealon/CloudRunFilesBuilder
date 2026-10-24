@@ -49,7 +49,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           # 打包两个平台
-          for PLATFORM in x86_64 aarch64_generic; do
+          for PLATFORM in x86_64 aarch64_generic aarch64_cortex-a53; do
             makeself "$PLATFORM" "output/luci-theme-argon-${VERSION}_${PLATFORM}.run" \
               "argon ${PLATFORM} Installer v${VERSION}" ./install.sh
           done
