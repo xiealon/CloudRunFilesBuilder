@@ -64,6 +64,23 @@ jobs:
               echo "  + $d/$f $(stat -c%s "pkg/install/$f") B"
             done <<< "$urls"
           done
+
+          # luci-app-store 在 run/x86 根目录，且本身是 makeself 的 .run，
+          # 必须解开取里面的 ipk/apk。漏了它 25.12 直接死在
+          #   ERROR: unable to select packages: luci-app-store (no such package)
+          STORE_RUN=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                        "https://api.github.com/repos/xiealon/$REPO/contents/run/x86?ref=master" \
+                      | jq -r '.[] | select(.type=="file") | select(.name|startswith("luci-app-store-")) | .download_url' \
+                      | head -n1)
+          if [ -z "$STORE_RUN" ]; then
+            echo "::error::xiealon/$REPO/run/x86 下没有 luci-app-store-*.run"; exit 1
+          fi
+          echo "  * luci-app-store <- $(basename "$STORE_RUN")"
+          curl -fsSL "$STORE_RUN" -o /tmp/luci-app-store.run
+          mkdir -p /tmp/storex
+          sh /tmp/luci-app-store.run --target /tmp/storex --noexec >/dev/null
+          find /tmp/storex -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp -v {} pkg/install/ \;
+
           echo "---- 文件数: $(ls -1 pkg/install | wc -l)  体积: $(du -sh pkg/install | cut -f1)"
 
       - name: install.sh placeholder
