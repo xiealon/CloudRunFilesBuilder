@@ -38,10 +38,30 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    # 表达式里不支持 replace/trim，改为固定 matrix + contains 过滤
+    if: contains(inputs.apps, matrix.app)
     strategy:
       fail-fast: false
       matrix:
-        app: ${{ fromJSON(format('["{0}"]', replace(inputs.apps, ' ', '","'))) }}
+        app:
+          - clashoo
+          - mosdns
+          - openclash
+          - nikki
+          - passwall
+          - passwall2
+          - ssrp
+          - homeproxy
+          - argon
+          - openlist2
+          - quickfile
+          - momo
+          - dufs
+          - singbox
+          - xraycore
+          - adguardhome
+          - daede
+          - uninstall
     steps:
       - uses: actions/checkout@v6
 
