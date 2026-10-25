@@ -113,9 +113,9 @@ jobs:
       - name: Create self-extracting packages
         run: |
           cd makeself
-          ./makeself.sh AdGuardHome_x86_64/ AdGuardHome_${{ env.LATEST_TAG }}_x86_64.run "by wukongdaily github action" ./install.sh
-          ./makeself.sh AdGuardHome_aarch64/ AdGuardHome_${{ env.LATEST_TAG }}_aarch64.run "by wukongdaily github action" ./install.sh
-          ./makeself.sh AdGuardHome_aarch32/ AdGuardHome_${{ env.LATEST_TAG }}_aarch32.run "by wukongdaily github action" ./install.sh
+          ./makeself.sh AdGuardHome_x86_64/ AdGuardHome_${{ env.LATEST_TAG }}_x86_64.run "by github action" ./install.sh
+          ./makeself.sh AdGuardHome_aarch64/ AdGuardHome_${{ env.LATEST_TAG }}_aarch64.run "by github action" ./install.sh
+          ./makeself.sh AdGuardHome_aarch32/ AdGuardHome_${{ env.LATEST_TAG }}_aarch32.run "by github action" ./install.sh
           
       - name: Check file sizes
         run: |
