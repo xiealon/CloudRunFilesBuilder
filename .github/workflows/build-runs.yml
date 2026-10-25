@@ -148,11 +148,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          TAG=$(TZ=Asia/Shanghai date +%F)
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "runs $TAG" \
-              --notes "clashoo ${CLASHOO_VER} / mosdns ${MOSDNS_TAG}（x86_64；24.10 用 ipk 版，25.12 用 25- 前缀 apk 版）"
-          gh release upload "$TAG" out/*.run --clobber
+          # 不建日期 tag：仓库里只保留 extra-ipk / extra-apk 两个包标签，
+          # 每次构建直接覆盖固定文件名，不再堆积 2026-10-25 这类快照。
 
           # 固定名分发：24.10 全部进 extra-ipk，25.12 全部进 extra-apk。
           # 两个标签内部文件名完全一致，ImageBuilder 只需换 RUN_BASE。
