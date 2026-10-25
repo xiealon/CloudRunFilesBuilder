@@ -4,8 +4,14 @@
 #   24.10 -> extra-ipk（ipk）
 #   25.12 -> extra-apk（apk）
 #
+# apps 支持：
+#   单个      clashoo
+#   多个      "clashoo mosdns"
+#   全部      all
+#
 # 用单 job + shell 循环：matrix 的 job-level if 拿不到 matrix 上下文，
 # 动态 fromJSON 拆分又不被 workflow 解析器接受，所以不用 matrix。
+# 每个应用在子 shell 里编译，一个编挂不影响后面的。
 name: sdk build
 
 on:
@@ -18,7 +24,7 @@ on:
         type: choice
         options: ['24.10', '25.12']
       apps:
-        description: '要编译的应用，空格分隔（clashoo mosdns ...）'
+        description: '要编译的应用（空格分隔，或填 all 全量）'
         required: true
         default: 'clashoo'
       upload:
@@ -76,62 +82,103 @@ jobs:
 
       - name: 逐个应用源码编译
         run: |
-          set -eu
+          set -u
           cd "$SDK_DIR"
           mkdir -p /opt/sdkout
-          for APP in ${{ inputs.apps }}; do
+
+          APPS="${{ inputs.apps }}"
+          if [ "$APPS" = "all" ]; then
+            APPS="clashoo mosdns openclash nikki momo passwall passwall2 ssrp homeproxy argon openlist2 quickfile dufs daede"
+          fi
+          echo "本轮编译: $APPS"
+
+          FAILED=""
+          for APP in $APPS; do
             echo ""
-            echo "########## $APP ##########"
-            rm -rf /tmp/src package/${APP} package/luci-app-${APP}
-            case "$APP" in
-              clashoo)
-                git clone --depth=1 https://github.com/kenzok8/openwrt-clashoo /tmp/src
-                cp -r /tmp/src/clashoo package/clashoo
-                cp -r /tmp/src/luci-app-clashoo package/luci-app-clashoo
-                ;;
-              mosdns)
-                git clone --depth=1 -b v5 https://github.com/sbwml/luci-app-mosdns /tmp/src
-                cp -r /tmp/src/mosdns package/mosdns
-                cp -r /tmp/src/luci-app-mosdns package/luci-app-mosdns
-                ;;
-              *)
-                echo "::warning::未配置源码，跳过 $APP"
-                continue
-                ;;
-            esac
-            rm -rf "/opt/sdkout/$APP"
-            mkdir -p "/opt/sdkout/$APP"
-            ls -d package/${APP} package/luci-app-${APP} 2>/dev/null || true
-            make defconfig
-            make package/$APP/compile V=s -j"$(nproc)"
-            if [ -f "package/luci-app-$APP/Makefile" ]; then
-              make package/luci-app-$APP/compile V=s -j"$(nproc)" || true
+            echo "################################ $APP ################################"
+            (
+              set -e
+              rm -rf /tmp/src
+              rm -rf "package/$APP" "package/luci-app-$APP"
+              case "$APP" in
+                clashoo)   REPO=kenzok8/openwrt-clashoo;            BR=main;   DIRS="clashoo luci-app-clashoo" ;;
+                mosdns)    REPO=sbwml/luci-app-mosdns;              BR=v5;     DIRS="mosdns luci-app-mosdns" ;;
+                openclash) REPO=vernesong/OpenClash;                BR=master; DIRS="luci-app-openclash" ;;
+                nikki)     REPO=nikkinikki-org/OpenWrt-nikki;       BR=main;   DIRS="nikki luci-app-nikki mihomo-meta" ;;
+                momo)      REPO=nikkinikki-org/OpenWrt-momo;        BR=main;   DIRS="momo luci-app-momo" ;;
+                passwall)  REPO=Openwrt-Passwall/openwrt-passwall;  BR=main;   DIRS="luci-app-passwall" ;;
+                passwall2) REPO=Openwrt-Passwall/openwrt-passwall2; BR=main;   DIRS="luci-app-passwall2" ;;
+                homeproxy) REPO=immortalwrt/homeproxy;              BR=master; DIRS="" ;;
+                argon)     REPO=jerrykuku/luci-theme-argon;         BR=master; DIRS="" ;;
+                openlist2) REPO=sbwml/luci-app-openlist2;           BR=main;   DIRS="openlist2 luci-app-openlist2" ;;
+                quickfile) REPO=sbwml/luci-app-quickfile;           BR=main;   DIRS="quickfile luci-app-quickfile" ;;
+                dufs)      REPO=zouzonghao/luci-app-dufs;           BR=main;   DIRS="" ;;
+                daede)     REPO=kenzok8/openwrt-daede;              BR=main;   DIRS="dae daed luci-app-daede" ;;
+                # ssrp：跳过 v2raya / naiveproxy / shadowsocksr-libev（体积大、Rust 易炸、协议淘汰）
+                ssrp)      REPO=fw876/helloworld;                   BR=dev;    DIRS="luci-app-ssr-plus xray-core mihomo hysteria chinadns-ng dns2socks microsocks ipt2socks" ;;
+                *) echo "::warning::未配置源码: $APP"; exit 2 ;;
+              esac
+
+              echo "源码: $REPO @$BR"
+              git clone --depth=1 -b "$BR" "https://github.com/$REPO" /tmp/src
+              if [ -z "$DIRS" ]; then
+                # 仓库根目录本身就是一个包
+                cp -r /tmp/src "package/$APP"
+              else
+                for d in $DIRS; do
+                  if [ -d "/tmp/src/$d" ]; then
+                    cp -r "/tmp/src/$d" "package/$d"
+                  else
+                    echo "::warning::$d 在 $REPO 里不存在"
+                  fi
+                done
+              fi
+
+              make defconfig
+              if [ -d "package/$APP" ]; then
+                make "package/$APP/compile" V=s -j"$(nproc)"
+              else
+                echo "::warning::package/$APP 不存在，跳过主包"
+              fi
+              for d in $DIRS; do
+                [ "$d" = "$APP" ] && continue
+                [ -d "package/$d" ] || continue
+                make "package/$d/compile" V=s -j"$(nproc)" || echo "::warning::$d 编译失败"
+              done
+
+              rm -rf "/opt/sdkout/$APP"
+              mkdir -p "/opt/sdkout/$APP"
+              # 只收本应用相关的包：SDK 编 luci 时会把 base 里几百个基础包
+              # 一起拉进 bin/packages，全收会让 run 从 24MB 涨到 222MB。
+              PAT="^${APP}[_-]|^luci-app-${APP}[_-]|^luci-i18n-${APP}|^luci-theme-${APP}"
+              for d in $DIRS; do
+                PAT="$PAT|^${d}[_-]"
+              done
+              find bin/packages -type f \( -name '*.ipk' -o -name '*.apk' \) \
+                | grep -E "$PAT" \
+                | while IFS= read -r f; do cp -v "$f" "/opt/sdkout/$APP"/; done || true
+              echo "--- $APP 收集到 $(ls -1 "/opt/sdkout/$APP" 2>/dev/null | wc -l) 个包 ---"
+              ls -l "/opt/sdkout/$APP"
+            )
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::$APP 编译失败 rc=$rc，继续下一个"
+              FAILED="$FAILED $APP"
             fi
-            # 只收本应用相关的包。SDK 编 luci 包时会把 base 里几百个基础包
-            # 一起拉进 bin/packages，全收会让 run 从 24MB 涨到 222MB。
-            case "$APP" in
-              clashoo) PAT='^clashoo[_-]|^luci-app-clashoo[_-]|^luci-i18n-clashoo' ;;
-              mosdns)  PAT='^mosdns[_-]|^luci-app-mosdns[_-]|^luci-i18n-mosdns' ;;
-              *)       PAT="^${APP}[_-]|^luci-app-${APP}[_-]|^luci-i18n-${APP}" ;;
-            esac
-            find bin/packages -type f \( -name '*.ipk' -o -name '*.apk' \) \
-              | grep -E "$PAT" \
-              | while IFS= read -r f; do cp -v "$f" "/opt/sdkout/$APP"/; done
-            echo "--- $APP 收集到 $(ls -1 /opt/sdkout/$APP | wc -l) 个包 ---"
-            ls -l "/opt/sdkout/$APP"
           done
+          echo ""
+          echo "======== 失败清单:${FAILED:- 无} ========"
 
       - name: 打包成 run
         run: |
-          set -eu
+          set -u
           git clone --depth=1 https://github.com/megastep/makeself.git /tmp/makeself
           chmod +x /tmp/makeself/makeself.sh
           mkdir -p "$GITHUB_WORKSPACE/run"
-          for APP in ${{ inputs.apps }}; do
-            D="/opt/sdkout/$APP"
-            [ -d "$D" ] || continue
+          for D in /opt/sdkout/*/; do
+            APP=$(basename "$D")
             n=$(ls "$D" 2>/dev/null | wc -l)
-            [ "$n" -gt 0 ] || { echo "::warning::$APP 无产物"; continue; }
+            [ "$n" -gt 0 ] || { echo "::warning::$APP 无产物，跳过"; continue; }
             # apk 文件名必须严格等于 <pkgname>-<pkgver>.apk
             for f in "$D"/*.apk; do
               [ -e "$f" ] || continue
@@ -169,5 +216,7 @@ jobs:
           ls -l
           if [ "${{ inputs.distro }}" = "24.10" ]; then TAG=extra-ipk; else TAG=extra-apk; fi
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TAG" --notes "sdk built"
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              --title "Extra Packages $TAG (source built)" \
+              --notes "由 ImmortalWrt SDK 从源码编译"
           gh release upload "$TAG" ./*.run -R "$GITHUB_REPOSITORY" --clobber
