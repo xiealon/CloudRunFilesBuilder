@@ -1,8 +1,11 @@
-name: 一键生产（本分支）
+name: 🚀 一键生产
 
-# 只在本分支内生产：extras 打本架构的 .run，build-runs 出 clashoo/mosdns，
-# 两者都直接覆盖本分支对应的 release（extra-ipk / extra-apk）。
-# 不跨分支、不碰其他架构的东西。
+# 只跑「当前分支上真实存在」的 workflow，ref 固定为当前分支。
+#   master       -> 全量（38 个）
+#   extra-ipk    -> 24.10 那 25 个
+#   extra-apk    -> 25.12 那 13 个
+# 这样从哪个分支点就在哪个分支跑，不会把 master 的活重新跑一遍，
+# 也不会去碰另一个架构。
 
 on:
   workflow_dispatch:
@@ -12,10 +15,10 @@ permissions:
   contents: write
 
 jobs:
-  trigger:
+  trigger-all:
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch extras + build-runs on this branch
+      - name: Trigger workflows that exist on this branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -23,9 +26,31 @@ jobs:
         run: |
           set -eu
           echo "branch = $REF"
-          for wf in extras.yml build-runs.yml; do
-            id=$(gh api "repos/$REPO/actions/workflows/$wf" --jq .id)
-            gh api --method POST "repos/$REPO/actions/workflows/$id/dispatches" -f ref="$REF"
-            echo "  dispatched $wf @ $REF"
-            sleep 2
-          done
+
+          gh api "repos/$REPO/contents/.github/workflows?ref=$REF" \
+            --jq '.[] | select(.name | test("\\.ya?ml$")) | .name' \
+            | sort > /tmp/files.txt
+          echo "本分支 workflow 文件 $(wc -l < /tmp/files.txt) 个"
+
+          ok=0
+          fail=0
+          while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            [ "$n" = "run-all.yml" ] && continue
+            id=$(gh api "repos/$REPO/actions/workflows/$n" --jq .id 2>/dev/null || true)
+            if [ -z "$id" ]; then
+              echo "  跳过 $n（默认分支上没有注册）"
+              continue
+            fi
+            if gh api --method POST "repos/$REPO/actions/workflows/$id/dispatches" \
+                 -f ref="$REF" >/dev/null 2>&1; then
+              echo "  dispatched $n @ $REF"
+              ok=$((ok+1))
+            else
+              echo "  ::warning::dispatch 失败 $n"
+              fail=$((fail+1))
+            fi
+            sleep 1
+          done < /tmp/files.txt
+
+          echo "成功 $ok，失败 $fail"
