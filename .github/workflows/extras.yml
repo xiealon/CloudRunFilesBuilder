@@ -1,4 +1,4 @@
-name: Build extras (24.10 ipk / 25.12 apk)
+name: Build extras (25.12 apk)
 
 # 一个应用一个 .run，不再打成一个整体包（v.186）。
 #   整体包的问题：一个 i18n 文件名错，整条构建线一起挂，且没法单独取某个包。
@@ -26,11 +26,6 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          - line: "24"
-            repo: "store"
-            ext: "ipk"
-            tag: "extra-ipk"
-            dirs: "luci-app-lucky:lucky luci-app-partexp:partexp luci-app-taskplan:taskplan rtp2httpd:rtp2httpd tailscale-community:tailscale-community luci-app-easytier:easytier"
           - line: "25"
             repo: "apk"
             ext: "apk"
