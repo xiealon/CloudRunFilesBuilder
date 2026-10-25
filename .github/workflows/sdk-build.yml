@@ -137,8 +137,10 @@ jobs:
               make defconfig
               if [ -d "package/$APP" ]; then
                 make "package/$APP/compile" V=s -j"$(nproc)"
+              elif [ -d "package/luci-app-$APP" ]; then
+                make "package/luci-app-$APP/compile" V=s -j"$(nproc)"
               else
-                echo "::warning::package/$APP 不存在，跳过主包"
+                echo "::warning::package/$APP 与 package/luci-app-$APP 都不存在"
               fi
               for d in $DIRS; do
                 [ "$d" = "$APP" ] && continue
@@ -154,11 +156,18 @@ jobs:
               for d in $DIRS; do
                 PAT="$PAT|^${d}[_-]"
               done
+              # find 输出的是 bin/packages/x86_64/base/xxx.ipk 这样的完整路径，
+              # 直接用 grep -E "^clashoo" 匹配行首永远落空，必须取 basename 再匹配。
               find bin/packages -type f \( -name '*.ipk' -o -name '*.apk' \) \
-                | grep -E "$PAT" \
-                | while IFS= read -r f; do cp -v "$f" "/opt/sdkout/$APP"/; done || true
-              echo "--- $APP 收集到 $(ls -1 "/opt/sdkout/$APP" 2>/dev/null | wc -l) 个包 ---"
+                | awk -F/ -v P="$PAT" '$NF ~ P' \
+                | while IFS= read -r f; do cp -v "$f" "/opt/sdkout/$APP"/; done
+              N=$(ls -1 "/opt/sdkout/$APP" 2>/dev/null | wc -l)
+              SZ=$(du -sh "/opt/sdkout/$APP" 2>/dev/null | cut -f1)
+              echo "--- $APP 收集到 $N 个包，共 $SZ ---"
               ls -l "/opt/sdkout/$APP"
+              if [ "$N" -eq 0 ]; then
+                echo "::error::$APP 编译完成但一个包都没收到，检查收集规则"
+              fi
             )
             rc=$?
             if [ "$rc" -ne 0 ]; then
