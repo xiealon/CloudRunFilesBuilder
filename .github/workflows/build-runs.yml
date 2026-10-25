@@ -51,15 +51,25 @@ jobs:
           apk_fixname() {
             for f in "$1"/*.apk; do
               [ -e "$f" ] || continue
+              cur=$(basename "$f")
+              base="${cur%.apk}"
               pn=$(tar -xzOf "$f" .PKGINFO 2>/dev/null | sed -n 's/^pkgname[[:space:]]*=[[:space:]]*//p' | head -n1)
               pv=$(tar -xzOf "$f" .PKGINFO 2>/dev/null | sed -n 's/^pkgver[[:space:]]*=[[:space:]]*//p'  | head -n1)
-              if [ -z "$pn" ] || [ -z "$pv" ]; then
-                echo "::warning::读不到 PKGINFO，跳过: $(basename "$f")"; continue
+              if [ -n "$pn" ] && [ -n "$pv" ]; then
+                want="$pn-$pv.apk"
+              else
+                # PKGINFO 读不到。apk 是多段 gzip 拼接（签名/控制/数据），
+                # GNU tar 只读第一段（签名），拿不到 .PKGINFO。
+                # 退回启发式：去掉 -<arch>，把 YYYY.MM.DD. 的末点还原成 ~。
+                # clashoo 就是这种，索引里要 clashoo-2026.10.25~6780eee-r3。
+                nb=$(printf '%s' "$base" \
+                  | sed -E 's/-(x86_64|aarch64_[a-z0-9_]+|arm_[a-z0-9_-]+|i386_pentium4|mips[a-z0-9_]*)$//' \
+                  | sed -E 's/([0-9]{4}\.[0-9]{2}\.[0-9]{2})\./\1~/')
+                want="$nb.apk"
               fi
-              cur=$(basename "$f")
-              if [ "$cur" != "$pn-$pv.apk" ]; then
-                mv -f "$f" "$1/$pn-$pv.apk"
-                echo "apk 名以 PKGINFO 为准: $cur -> $pn-$pv.apk"
+              if [ "$cur" != "$want" ]; then
+                mv -f "$f" "$1/$want"
+                echo "apk 名修正: $cur -> $want"
               fi
             done
           }
@@ -95,15 +105,25 @@ jobs:
           apk_fixname() {
             for f in "$1"/*.apk; do
               [ -e "$f" ] || continue
+              cur=$(basename "$f")
+              base="${cur%.apk}"
               pn=$(tar -xzOf "$f" .PKGINFO 2>/dev/null | sed -n 's/^pkgname[[:space:]]*=[[:space:]]*//p' | head -n1)
               pv=$(tar -xzOf "$f" .PKGINFO 2>/dev/null | sed -n 's/^pkgver[[:space:]]*=[[:space:]]*//p'  | head -n1)
-              if [ -z "$pn" ] || [ -z "$pv" ]; then
-                echo "::warning::读不到 PKGINFO，跳过: $(basename "$f")"; continue
+              if [ -n "$pn" ] && [ -n "$pv" ]; then
+                want="$pn-$pv.apk"
+              else
+                # PKGINFO 读不到。apk 是多段 gzip 拼接（签名/控制/数据），
+                # GNU tar 只读第一段（签名），拿不到 .PKGINFO。
+                # 退回启发式：去掉 -<arch>，把 YYYY.MM.DD. 的末点还原成 ~。
+                # clashoo 就是这种，索引里要 clashoo-2026.10.25~6780eee-r3。
+                nb=$(printf '%s' "$base" \
+                  | sed -E 's/-(x86_64|aarch64_[a-z0-9_]+|arm_[a-z0-9_-]+|i386_pentium4|mips[a-z0-9_]*)$//' \
+                  | sed -E 's/([0-9]{4}\.[0-9]{2}\.[0-9]{2})\./\1~/')
+                want="$nb.apk"
               fi
-              cur=$(basename "$f")
-              if [ "$cur" != "$pn-$pv.apk" ]; then
-                mv -f "$f" "$1/$pn-$pv.apk"
-                echo "apk 名以 PKGINFO 为准: $cur -> $pn-$pv.apk"
+              if [ "$cur" != "$want" ]; then
+                mv -f "$f" "$1/$want"
+                echo "apk 名修正: $cur -> $want"
               fi
             done
           }
