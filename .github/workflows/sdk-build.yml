@@ -1,19 +1,18 @@
 # 用 ImmortalWrt SDK 从源码编译，不从任何 release / fork 取现成包。
 #
-# 每个 app 一个 job（matrix），最后打成 <app>_x86_64.run，发到对应标签：
+# 每个应用编完单独打一个 <app>_x86_64.run，发到对应标签：
 #   24.10 -> extra-ipk（ipk）
 #   25.12 -> extra-apk（apk）
 #
-# 触发方式：
-#   apps 用空格分隔，例如 "clashoo mosdns"
-#   distro 选 24.10 或 25.12
+# 用单 job + shell 循环：matrix 的 job-level if 拿不到 matrix 上下文，
+# 动态 fromJSON 拆分又不被 workflow 解析器接受，所以不用 matrix。
 name: sdk build
 
 on:
   workflow_dispatch:
     inputs:
       distro:
-        description: 'SDK 版本：24.10 或 25.12'
+        description: 'SDK 版本'
         required: true
         default: '24.10'
         type: choice
@@ -21,11 +20,11 @@ on:
       apps:
         description: '要编译的应用，空格分隔（clashoo mosdns ...）'
         required: true
-        default: 'clashoo mosdns'
+        default: 'clashoo'
       upload:
         description: '是否上传到 release'
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -38,30 +37,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    # 表达式里不支持 replace/trim，改为固定 matrix + contains 过滤
-    if: contains(inputs.apps, matrix.app)
-    strategy:
-      fail-fast: false
-      matrix:
-        app:
-          - clashoo
-          - mosdns
-          - openclash
-          - nikki
-          - passwall
-          - passwall2
-          - ssrp
-          - homeproxy
-          - argon
-          - openlist2
-          - quickfile
-          - momo
-          - dufs
-          - singbox
-          - xraycore
-          - adguardhome
-          - daede
-          - uninstall
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v6
 
@@ -87,7 +63,7 @@ jobs:
           SDK_DIR=$(ls -d /opt/sdk/*/ | head -n1)
           echo "SDK_DIR=$SDK_DIR" >> "$GITHUB_ENV"
           echo "解压到 $SDK_DIR"
-          ls "$SDK_DIR" | head -20
+          ls "$SDK_DIR"
 
       - name: 更新 feeds
         run: |
@@ -95,82 +71,84 @@ jobs:
           cd "$SDK_DIR"
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          echo "--- golang 是否就位 ---"
+          echo "--- golang feed ---"
           ls feeds/packages/lang/golang/ 2>/dev/null | head -5 || echo "缺少 golang feed"
 
-      - name: 拉源码进 package/
+      - name: 逐个应用源码编译
         run: |
           set -eu
           cd "$SDK_DIR"
-          APP="${{ matrix.app }}"
-          mkdir -p /tmp/src
-          case "$APP" in
-            clashoo)
-              git clone --depth=1 https://github.com/kenzok8/openwrt-clashoo /tmp/src/clashoo
-              cp -r /tmp/src/clashoo/clashoo package/clashoo
-              cp -r /tmp/src/clashoo/luci-app-clashoo package/luci-app-clashoo
-              ;;
-            mosdns)
-              git clone --depth=1 -b v5 https://github.com/sbwml/luci-app-mosdns /tmp/src/mosdns
-              cp -r /tmp/src/mosdns/mosdns package/mosdns
-              cp -r /tmp/src/mosdns/luci-app-mosdns package/luci-app-mosdns
-              ;;
-            *)
-              echo "::error::未配置源码: $APP"
-              exit 1
-              ;;
-          esac
-          echo "--- package/ 下的目标 ---"
-          ls -d package/*/ | grep -E "clashoo|mosdns" || true
-
-      - name: 编译
-        run: |
-          set -eu
-          cd "$SDK_DIR"
-          APP="${{ matrix.app }}"
-          make defconfig
-          # golang 是 host 依赖，首次编译会自行 bootstrap，耗时较长属正常
-          make package/$APP/compile V=s -j"$(nproc)" || true
-          LUCI="package/luci-app-$APP/compile"
-          if grep -q "PKG_NAME" "package/luci-app-$APP/Makefile" 2>/dev/null; then
-            make $LUCI V=s -j"$(nproc)" || true
-          fi
-          echo "--- 产物 ---"
-          find bin/packages -type f \( -name '*.ipk' -o -name '*.apk' \) | sort
-
-      - name: 收集并打包成 run
-        run: |
-          set -eu
-          cd "$SDK_DIR"
-          APP="${{ matrix.app }}"
-          OUT="$GITHUB_WORKSPACE/out/$APP"
-          mkdir -p "$OUT"
-          find bin/packages -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp {} "$OUT"/ \;
-          # apk 文件名必须严格等于 <pkgname>-<pkgver>.apk
-          for f in "$OUT"/*.apk; do
-            [ -e "$f" ] || continue
-            b=$(basename "$f" .apk)
-            nb=$(printf '%s' "$b" \
-              | sed -E 's/-(x86_64|aarch64_[a-z0-9_]+|arm_[a-z0-9_-]+|i386_pentium4)$//' \
-              | sed -E 's/([0-9]{4}\.[0-9]{2}\.[0-9]{2})\./\1~/')
-            [ "$nb" != "$b" ] && mv -f "$f" "$OUT/$nb.apk" && echo "规范化 $b.apk -> $nb.apk"
+          mkdir -p /opt/sdkout
+          for APP in ${{ inputs.apps }}; do
+            echo ""
+            echo "########## $APP ##########"
+            rm -rf /tmp/src package/${APP} package/luci-app-${APP}
+            case "$APP" in
+              clashoo)
+                git clone --depth=1 https://github.com/kenzok8/openwrt-clashoo /tmp/src
+                cp -r /tmp/src/clashoo package/clashoo
+                cp -r /tmp/src/luci-app-clashoo package/luci-app-clashoo
+                ;;
+              mosdns)
+                git clone --depth=1 -b v5 https://github.com/sbwml/luci-app-mosdns /tmp/src
+                cp -r /tmp/src/mosdns package/mosdns
+                cp -r /tmp/src/luci-app-mosdns package/luci-app-mosdns
+                ;;
+              *)
+                echo "::warning::未配置源码，跳过 $APP"
+                continue
+                ;;
+            esac
+            rm -rf "/opt/sdkout/$APP"
+            mkdir -p "/opt/sdkout/$APP"
+            ls -d package/${APP} package/luci-app-${APP} 2>/dev/null || true
+            make defconfig
+            make package/$APP/compile V=s -j"$(nproc)"
+            if [ -f "package/luci-app-$APP/Makefile" ]; then
+              make package/luci-app-$APP/compile V=s -j"$(nproc)" || true
+            fi
+            find bin/packages -type f \( -name '*.ipk' -o -name '*.apk' \) \
+              -exec cp -v {} "/opt/sdkout/$APP"/ \;
+            ls -l "/opt/sdkout/$APP"
           done
-          if [ "${{ inputs.distro }}" = "24.10" ]; then
-            printf '#!/bin/sh\nopkg update || exit 1\nopkg install ./*.ipk\n' > "$OUT/install.sh"
-          else
-            printf '#!/bin/sh\napk update || exit 1\napk add --allow-untrusted ./*.apk\n' > "$OUT/install.sh"
-          fi
-          ls -l "$OUT"
 
+      - name: 打包成 run
+        run: |
+          set -eu
           git clone --depth=1 https://github.com/megastep/makeself.git /tmp/makeself
           chmod +x /tmp/makeself/makeself.sh
-          /tmp/makeself/makeself.sh "$OUT" "$GITHUB_WORKSPACE/${APP}_x86_64.run" "$APP" ./install.sh
-          ls -l "$GITHUB_WORKSPACE"/*.run
+          mkdir -p "$GITHUB_WORKSPACE/run"
+          for APP in ${{ inputs.apps }}; do
+            D="/opt/sdkout/$APP"
+            [ -d "$D" ] || continue
+            n=$(ls "$D" 2>/dev/null | wc -l)
+            [ "$n" -gt 0 ] || { echo "::warning::$APP 无产物"; continue; }
+            # apk 文件名必须严格等于 <pkgname>-<pkgver>.apk
+            for f in "$D"/*.apk; do
+              [ -e "$f" ] || continue
+              b=$(basename "$f" .apk)
+              nb=$(printf '%s' "$b" \
+                | sed -E 's/-(x86_64|aarch64_[a-z0-9_]+|arm_[a-z0-9_-]+|i386_pentium4)$//' \
+                | sed -E 's/([0-9]{4}\.[0-9]{2}\.[0-9]{2})\./\1~/')
+              [ "$nb" != "$b" ] && mv -f "$f" "$D/$nb.apk" && echo "规范化 $b.apk -> $nb.apk"
+            done
+            if [ "${{ inputs.distro }}" = "24.10" ]; then
+              printf '#!/bin/sh\nopkg update || exit 1\nopkg install ./*.ipk\n' > "$D/install.sh"
+            else
+              printf '#!/bin/sh\napk update || exit 1\napk add --allow-untrusted ./*.apk\n' > "$D/install.sh"
+            fi
+            chmod +x "$D/install.sh"
+            ls -l "$D"
+            /tmp/makeself/makeself.sh "$D" "$GITHUB_WORKSPACE/run/${APP}_x86_64.run" "$APP" ./install.sh
+          done
+          ls -l "$GITHUB_WORKSPACE/run"
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: run-${{ inputs.distro }}-${{ matrix.app }}
-          path: ${{ github.workspace }}/*.run
+          name: sdk-${{ inputs.distro }}-runs
+          path: ${{ github.workspace }}/run/*.run
+          if-no-files-found: warn
 
       - name: 上传到 release
         if: inputs.upload
@@ -178,7 +156,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
+          cd "$GITHUB_WORKSPACE/run"
+          ls -l
           if [ "${{ inputs.distro }}" = "24.10" ]; then TAG=extra-ipk; else TAG=extra-apk; fi
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TAG" --notes "sdk built"
-          gh release upload "$TAG" "$GITHUB_WORKSPACE"/*.run -R "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" ./*.run -R "$GITHUB_REPOSITORY" --clobber
