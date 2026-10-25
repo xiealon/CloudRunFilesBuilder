@@ -1,17 +1,20 @@
 name: Build extras (24.10 ipk / 25.12 apk)
 
-# 只打包 ImmortalWrt-ImageBuilder 真正 install 的那几个包。
-# 不 clone 上游整个仓库（store/run/x86 257 MB、apk/run/x86 199 MB），
-# 只按目录名从 xiealon/store、xiealon/apk 取匹配扩展名的文件（合计约 33 MB）。
-# 产物固定名发到 extra 标签，供 build24.sh / build25.sh 直链下载。
+# 一个应用一个 .run，不再打成一个整体包（v.186）。
+#   整体包的问题：一个 i18n 文件名错，整条构建线一起挂，且没法单独取某个包。
+#
+# 24.10（ipk）的产物发到 extra 标签，
+# 25.12（apk）的产物发到 extra25 标签。
+# 两个标签内部文件名完全一致，ImageBuilder 只需换 RUN_BASE。
+#
+# 源仍然是 xiealon/store、xiealon/apk 的 run/x86 子目录，不 clone 整仓（456 MB）。
 
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 19 * * *'
 
-# 上传 release 资产需要写权限；默认 GITHUB_TOKEN 只有 read，
-# 首次运行就是卡在这里：HTTP 403 Resource not accessible by integration
+# 上传 release 资产需要写权限；默认 GITHUB_TOKEN 只有 read
 permissions:
   contents: write
 
@@ -26,13 +29,13 @@ jobs:
           - line: "24"
             repo: "store"
             ext: "ipk"
-            out: "extras24_x86_64.run"
-            dirs: "luci-app-lucky luci-app-partexp luci-app-taskplan rtp2httpd tailscale-community luci-app-easytier"
+            tag: "extra"
+            dirs: "luci-app-lucky:lucky luci-app-partexp:partexp luci-app-taskplan:taskplan rtp2httpd:rtp2httpd tailscale-community:tailscale-community luci-app-easytier:easytier"
           - line: "25"
             repo: "apk"
             ext: "apk"
-            out: "extras25_x86_64.run"
-            dirs: "lucky partexp taskplan rtp2httpd"
+            tag: "extra25"
+            dirs: "lucky:lucky partexp:partexp taskplan:taskplan rtp2httpd:rtp2httpd"
 
     steps:
       - name: Checkout
@@ -41,7 +44,7 @@ jobs:
       - name: Clone makeself
         run: git clone --depth=1 https://github.com/megastep/makeself.git
 
-      - name: Fetch needed packages only
+      - name: Fetch packages, one dir per app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ matrix.repo }}
@@ -49,13 +52,13 @@ jobs:
           EXT: ${{ matrix.ext }}
         run: |
           set -euo pipefail
-          mkdir -p pkg/install
-          for d in $DIRS; do
+          for pair in $DIRS; do
+            d="${pair%%:*}"
+            out="${pair##*:}"
+            mkdir -p "pkg-$out/install"
             # 必须用 API 返回的 .name（原名），不能用 basename(.download_url)：
-            # download_url 把 ~ 编码成 %7E，落盘文件名就成了
-            #   luci-i18n-lucky-zh-cn-26.021.55893%7E28c17bc.apk
-            # 而 apk 索引里记的是 ~，于是 25.12 构建报
-            #   ERROR: luci-i18n-lucky-zh-cn-26.021.55893~28c17bc: package mentioned in index not found
+            # download_url 把 ~ 编码成 %7E，落盘就成了 ...55893%7E28c17bc.apk，
+            # 而 apk 索引里是 ~，25.12 构建直接报 package mentioned in index not found
             items=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
                       "https://api.github.com/repos/xiealon/$REPO/contents/run/x86/$d?ref=master" \
                     | jq -r --arg ext ".$EXT" '.[] | select(.name|endswith($ext)) | [.name, .download_url] | @tsv')
@@ -64,52 +67,64 @@ jobs:
             fi
             while IFS="$(printf '\t')" read -r f u; do
               [ -n "$f" ] || continue
-              curl -fsSL "$u" -o "pkg/install/$f"
-              echo "  + $d/$f $(stat -c%s "pkg/install/$f") B"
+              curl -fsSL "$u" -o "pkg-$out/install/$f"
+              echo "  + $d/$f $(stat -c%s "pkg-$out/install/$f") B"
             done <<< "$items"
+            printf '#!/bin/sh\nexit 0\n' > "pkg-$out/install.sh"
+            chmod +x "pkg-$out/install.sh"
           done
 
-          # luci-app-store 在 run/x86 根目录，且本身是 makeself 的 .run，
+          # luci-app-store 在 run/x86 根目录，本身是 makeself 的 .run，
           # 必须解开取里面的 ipk/apk。漏了它 25.12 直接死在
           #   ERROR: unable to select packages: luci-app-store (no such package)
-          STORE_RUN=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-                        "https://api.github.com/repos/xiealon/$REPO/contents/run/x86?ref=master" \
-                      | jq -r '.[] | select(.type=="file") | select(.name|startswith("luci-app-store-")) | .download_url' \
-                      | head -n1)
-          if [ -z "$STORE_RUN" ]; then
+          store_json=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                         "https://api.github.com/repos/xiealon/$REPO/contents/run/x86?ref=master")
+          STORE_NAME=$(printf '%s' "$store_json" \
+                         | jq -r '.[] | select(.type=="file") | select(.name|startswith("luci-app-store-")) | .name' \
+                         | head -n1)
+          STORE_URL=$(printf '%s' "$store_json" \
+                        | jq -r '.[] | select(.type=="file") | select(.name|startswith("luci-app-store-")) | .download_url' \
+                        | head -n1)
+          if [ -z "$STORE_URL" ]; then
             echo "::error::xiealon/$REPO/run/x86 下没有 luci-app-store-*.run"; exit 1
           fi
-          echo "  * luci-app-store <- $(basename "$STORE_RUN")"
-          curl -fsSL "$STORE_RUN" -o /tmp/luci-app-store.run
-          mkdir -p /tmp/storex
+          echo "  * luci-app-store <- $STORE_NAME"
+          mkdir -p pkg-luci-app-store/install /tmp/storex
+          curl -fsSL "$STORE_URL" -o /tmp/luci-app-store.run
           sh /tmp/luci-app-store.run --target /tmp/storex --noexec >/dev/null
-          find /tmp/storex -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp -v {} pkg/install/ \;
+          find /tmp/storex -type f \( -name '*.ipk' -o -name '*.apk' \) \
+            -exec cp -v {} pkg-luci-app-store/install/ \;
+          printf '#!/bin/sh\nexit 0\n' > pkg-luci-app-store/install.sh
+          chmod +x pkg-luci-app-store/install.sh
 
-          echo "---- 文件数: $(ls -1 pkg/install | wc -l)  体积: $(du -sh pkg/install | cut -f1)"
+          echo "---- 待打包目录:"
+          ls -1d pkg-*
 
-      - name: install.sh placeholder
-        run: |
-          printf '#!/bin/sh\n# CloudRunFilesBuilder 自动生成；ImageBuilder 只用 --noexec 解包，不执行本脚本\nexit 0\n' > pkg/install.sh
-          chmod +x pkg/install.sh
-
-      - name: makeself
-        run: |
-          cd makeself
-          ./makeself.sh ../pkg "../${{ matrix.out }}" "extras ${{ matrix.line }} x86_64 by github action" ./install.sh
-          ls -lh "../${{ matrix.out }}"
-
-      - name: Publish fixed name to extra
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: makeself, one .run per app
         run: |
           set -euo pipefail
-          F="${{ matrix.out }}"
-          if ! gh release view extra -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create extra -R "$GITHUB_REPOSITORY" \
-              --title "Extra Packages (fixed filenames)" \
+          cd makeself
+          for p in ../pkg-*; do
+            [ -d "$p" ] || continue
+            out=$(basename "$p" | sed 's/^pkg-//')
+            ./makeself.sh "$p" "../${out}_x86_64.run" "${out} ${{ matrix.line }} x86_64" ./install.sh
+          done
+          ls -lh ../*_x86_64.run
+
+      - name: Publish to ${{ matrix.tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              --title "Extra Packages $TAG (fixed filenames)" \
               --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" \
               --latest=false
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/tags/extra" -f make_latest=false >/dev/null || true
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" -f make_latest=false >/dev/null || true
           fi
-          gh release upload extra "$F" -R "$GITHUB_REPOSITORY" --clobber
-          echo "✅ published $F = $(stat -c%s "$F") bytes"
+          gh release upload "$TAG" ./*_x86_64.run -R "$GITHUB_REPOSITORY" --clobber
+          echo "### $TAG" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+            --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
