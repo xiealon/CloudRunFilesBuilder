@@ -51,18 +51,22 @@ jobs:
           set -euo pipefail
           mkdir -p pkg/install
           for d in $DIRS; do
-            urls=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-                     "https://api.github.com/repos/xiealon/$REPO/contents/run/x86/$d?ref=master" \
-                   | jq -r --arg ext ".$EXT" '.[] | select(.name|endswith($ext)) | .download_url')
-            if [ -z "$urls" ]; then
+            # 必须用 API 返回的 .name（原名），不能用 basename(.download_url)：
+            # download_url 把 ~ 编码成 %7E，落盘文件名就成了
+            #   luci-i18n-lucky-zh-cn-26.021.55893%7E28c17bc.apk
+            # 而 apk 索引里记的是 ~，于是 25.12 构建报
+            #   ERROR: luci-i18n-lucky-zh-cn-26.021.55893~28c17bc: package mentioned in index not found
+            items=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                      "https://api.github.com/repos/xiealon/$REPO/contents/run/x86/$d?ref=master" \
+                    | jq -r --arg ext ".$EXT" '.[] | select(.name|endswith($ext)) | [.name, .download_url] | @tsv')
+            if [ -z "$items" ]; then
               echo "::error::xiealon/$REPO/run/x86/$d 没取到 .$EXT"; exit 1
             fi
-            while IFS= read -r u; do
-              [ -n "$u" ] || continue
-              f=$(basename "$u")
+            while IFS="$(printf '\t')" read -r f u; do
+              [ -n "$f" ] || continue
               curl -fsSL "$u" -o "pkg/install/$f"
               echo "  + $d/$f $(stat -c%s "pkg/install/$f") B"
-            done <<< "$urls"
+            done <<< "$items"
           done
 
           # luci-app-store 在 run/x86 根目录，且本身是 makeself 的 .run，
