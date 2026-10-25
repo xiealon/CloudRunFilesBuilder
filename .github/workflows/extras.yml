@@ -3,8 +3,8 @@ name: Build extras (24.10 ipk / 25.12 apk)
 # 一个应用一个 .run，不再打成一个整体包（v.186）。
 #   整体包的问题：一个 i18n 文件名错，整条构建线一起挂，且没法单独取某个包。
 #
-# 24.10（ipk）的产物发到 extra 标签，
-# 25.12（apk）的产物发到 extra25 标签。
+# 24.10（ipk）的产物发到 extra-ipk 标签，
+# 25.12（apk）的产物发到 extra-apk 标签。
 # 两个标签内部文件名完全一致，ImageBuilder 只需换 RUN_BASE。
 #
 # 源仍然是 xiealon/store、xiealon/apk 的 run/x86 子目录，不 clone 整仓（456 MB）。
@@ -29,12 +29,12 @@ jobs:
           - line: "24"
             repo: "store"
             ext: "ipk"
-            tag: "extra"
+            tag: "extra-ipk"
             dirs: "luci-app-lucky:lucky luci-app-partexp:partexp luci-app-taskplan:taskplan rtp2httpd:rtp2httpd tailscale-community:tailscale-community luci-app-easytier:easytier"
           - line: "25"
             repo: "apk"
             ext: "apk"
-            tag: "extra25"
+            tag: "extra-apk"
             dirs: "lucky:lucky partexp:partexp taskplan:taskplan rtp2httpd:rtp2httpd"
 
     steps:
