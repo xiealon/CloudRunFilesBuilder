@@ -151,25 +151,15 @@ jobs:
           # 不建日期 tag：仓库里只保留 extra-ipk / extra-apk 两个包标签，
           # 每次构建直接覆盖固定文件名，不再堆积 2026-10-25 这类快照。
 
-          # 固定名分发：24.10 全部进 extra-ipk，25.12 全部进 extra-apk。
-          # 两个标签内部文件名完全一致，ImageBuilder 只需换 RUN_BASE。
-          mkdir -p pub24 pub25
-          cp -f "out/clashoo_${CLASHOO_VER}_x86_64.run"      pub24/clashoo_x86_64.run
-          cp -f "out/mosdns_${MOSDNS_TAG}_x86_64.run"        pub24/mosdns_x86_64.run
-          cp -f "out/25-clashoo_${CLASHOO_VER}_x86_64.run"   pub25/clashoo_x86_64.run
-          cp -f "out/25-mosdns_${MOSDNS_TAG}_x86_64.run"     pub25/mosdns_x86_64.run
-
-          for T in extra-ipk extra-apk; do
-            gh release view "$T" >/dev/null 2>&1 || \
-              gh release create "$T" --title "Extra Packages $T (fixed filenames)" \
-                --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" --latest=false
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/tags/$T" -f make_latest=false >/dev/null || true
-          done
-          gh release upload extra-ipk pub24/*.run --clobber
-          gh release upload extra-apk pub25/*.run --clobber
-
-          for T in extra-ipk extra-apk; do
-            echo "### $T" >> "$GITHUB_STEP_SUMMARY"
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$T" \
-              --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
-          done
+          # 固定名分发：本分支只出 25.12，直接覆盖 extra-apk
+          mkdir -p pub
+          cp -f "out/25-clashoo_${CLASHOO_VER}_x86_64.run" pub/clashoo_x86_64.run
+          cp -f "out/25-mosdns_${MOSDNS_TAG}_x86_64.run"   pub/mosdns_x86_64.run
+          gh release view extra-apk >/dev/null 2>&1 || \
+            gh release create extra-apk --title "Extra Packages extra-apk (25.12 ipk)" \
+              --notes "25.12 ipk 固定名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" --latest=false
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/tags/extra-apk" -f make_latest=false >/dev/null || true
+          gh release upload extra-apk pub/*.run --clobber
+          echo "### extra-apk" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/extra-apk" \
+            --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
