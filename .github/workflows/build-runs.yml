@@ -134,7 +134,7 @@ jobs:
               --notes "clashoo ${CLASHOO_VER} / mosdns ${MOSDNS_TAG}（x86_64；24.10 用 ipk 版，25.12 用 25- 前缀 apk 版）"
           gh release upload "$TAG" out/*.run --clobber
 
-          # 固定名分发：24.10 全部进 extra，25.12 全部进 extra25。
+          # 固定名分发：24.10 全部进 extra-ipk，25.12 全部进 extra-apk。
           # 两个标签内部文件名完全一致，ImageBuilder 只需换 RUN_BASE。
           mkdir -p pub24 pub25
           cp -f "out/clashoo_${CLASHOO_VER}_x86_64.run"      pub24/clashoo_x86_64.run
@@ -142,16 +142,16 @@ jobs:
           cp -f "out/25-clashoo_${CLASHOO_VER}_x86_64.run"   pub25/clashoo_x86_64.run
           cp -f "out/25-mosdns_${MOSDNS_TAG}_x86_64.run"     pub25/mosdns_x86_64.run
 
-          for T in extra extra25; do
+          for T in extra-ipk extra-apk; do
             gh release view "$T" >/dev/null 2>&1 || \
               gh release create "$T" --title "Extra Packages $T (fixed filenames)" \
                 --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" --latest=false
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/tags/$T" -f make_latest=false >/dev/null || true
           done
-          gh release upload extra   pub24/*.run --clobber
-          gh release upload extra25 pub25/*.run --clobber
+          gh release upload extra-ipk pub24/*.run --clobber
+          gh release upload extra-apk pub25/*.run --clobber
 
-          for T in extra extra25; do
+          for T in extra-ipk extra-apk; do
             echo "### $T" >> "$GITHUB_STEP_SUMMARY"
             gh api "repos/$GITHUB_REPOSITORY/releases/tags/$T" \
               --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
