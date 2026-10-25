@@ -107,8 +107,17 @@ jobs:
             if [ -f "package/luci-app-$APP/Makefile" ]; then
               make package/luci-app-$APP/compile V=s -j"$(nproc)" || true
             fi
+            # 只收本应用相关的包。SDK 编 luci 包时会把 base 里几百个基础包
+            # 一起拉进 bin/packages，全收会让 run 从 24MB 涨到 222MB。
+            case "$APP" in
+              clashoo) PAT='^clashoo[_-]|^luci-app-clashoo[_-]|^luci-i18n-clashoo' ;;
+              mosdns)  PAT='^mosdns[_-]|^luci-app-mosdns[_-]|^luci-i18n-mosdns' ;;
+              *)       PAT="^${APP}[_-]|^luci-app-${APP}[_-]|^luci-i18n-${APP}" ;;
+            esac
             find bin/packages -type f \( -name '*.ipk' -o -name '*.apk' \) \
-              -exec cp -v {} "/opt/sdkout/$APP"/ \;
+              | grep -E "$PAT" \
+              | while IFS= read -r f; do cp -v "$f" "/opt/sdkout/$APP"/; done
+            echo "--- $APP 收集到 $(ls -1 /opt/sdkout/$APP | wc -l) 个包 ---"
             ls -l "/opt/sdkout/$APP"
           done
 
