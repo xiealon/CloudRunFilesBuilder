@@ -10,11 +10,17 @@ on:
   schedule:
     - cron: '0 19 * * *'
 
+# 上传 release 资产需要写权限；默认 GITHUB_TOKEN 只有 read，
+# 首次运行就是卡在这里：HTTP 403 Resource not accessible by integration
+permissions:
+  contents: write
+
 jobs:
   extras:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - line: "24"
