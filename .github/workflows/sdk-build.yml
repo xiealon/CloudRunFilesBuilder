@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: ${{ fromJSON(format('["{0}"]', replace(trim(inputs.apps), ' ', '","'))) }}
+        app: ${{ fromJSON(format('["{0}"]', replace(inputs.apps, ' ', '","'))) }}
     steps:
       - uses: actions/checkout@v6
 
