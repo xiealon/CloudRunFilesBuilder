@@ -1,0 +1,88 @@
+name: Build extras (24.10 ipk / 25.12 apk)
+
+# 只打包 ImmortalWrt-ImageBuilder 真正 install 的那几个包。
+# 不 clone 上游整个仓库（store/run/x86 257 MB、apk/run/x86 199 MB），
+# 只按目录名从 xiealon/store、xiealon/apk 取匹配扩展名的文件（合计约 33 MB）。
+# 产物固定名发到 extra 标签，供 build24.sh / build25.sh 直链下载。
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 19 * * *'
+
+jobs:
+  extras:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - line: "24"
+            repo: "store"
+            ext: "ipk"
+            out: "extras24_x86_64.run"
+            dirs: "luci-app-lucky luci-app-partexp luci-app-taskplan rtp2httpd tailscale-community luci-app-easytier"
+          - line: "25"
+            repo: "apk"
+            ext: "apk"
+            out: "extras25_x86_64.run"
+            dirs: "lucky partexp taskplan rtp2httpd"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Clone makeself
+        run: git clone --depth=1 https://github.com/megastep/makeself.git
+
+      - name: Fetch needed packages only
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ matrix.repo }}
+          DIRS: ${{ matrix.dirs }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          set -euo pipefail
+          mkdir -p pkg/install
+          for d in $DIRS; do
+            urls=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                     "https://api.github.com/repos/xiealon/$REPO/contents/run/x86/$d?ref=master" \
+                   | jq -r --arg ext ".$EXT" '.[] | select(.name|endswith($ext)) | .download_url')
+            if [ -z "$urls" ]; then
+              echo "::error::xiealon/$REPO/run/x86/$d 没取到 .$EXT"; exit 1
+            fi
+            while IFS= read -r u; do
+              [ -n "$u" ] || continue
+              f=$(basename "$u")
+              curl -fsSL "$u" -o "pkg/install/$f"
+              echo "  + $d/$f $(stat -c%s "pkg/install/$f") B"
+            done <<< "$urls"
+          done
+          echo "---- 文件数: $(ls -1 pkg/install | wc -l)  体积: $(du -sh pkg/install | cut -f1)"
+
+      - name: install.sh placeholder
+        run: |
+          printf '#!/bin/sh\n# CloudRunFilesBuilder 自动生成；ImageBuilder 只用 --noexec 解包，不执行本脚本\nexit 0\n' > pkg/install.sh
+          chmod +x pkg/install.sh
+
+      - name: makeself
+        run: |
+          cd makeself
+          ./makeself.sh ../pkg "../${{ matrix.out }}" "extras ${{ matrix.line }} x86_64 by github action" ./install.sh
+          ls -lh "../${{ matrix.out }}"
+
+      - name: Publish fixed name to extra
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          F="${{ matrix.out }}"
+          if ! gh release view extra -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create extra -R "$GITHUB_REPOSITORY" \
+              --title "Extra Packages (fixed filenames)" \
+              --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" \
+              --latest=false
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/tags/extra" -f make_latest=false >/dev/null || true
+          fi
+          gh release upload extra "$F" -R "$GITHUB_REPOSITORY" --clobber
+          echo "✅ published $F = $(stat -c%s "$F") bytes"
