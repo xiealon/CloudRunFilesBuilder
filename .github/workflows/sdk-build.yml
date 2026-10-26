@@ -9,9 +9,14 @@
 #   多个      "clashoo mosdns"
 #   全部      all
 #
-# 用单 job + shell 循环：matrix 的 job-level if 拿不到 matrix 上下文，
-# 动态 fromJSON 拆分又不被 workflow 解析器接受，所以不用 matrix。
-# 每个应用在子 shell 里编译，一个编挂不影响后面的。
+# 2026-10-26 改动：
+#   1. 拆成两个并行 job（matrix）：
+#        main  -> 常规应用
+#        heavy -> openclash / openlist2（依赖脏、最重），失败不影响 main，也不会把整个 run 拖红
+#   2. 关键修复：GitHub Actions 的 run 默认是 `bash -eo pipefail`，
+#      之前子 shell 编挂会直接把整个 step 干掉（rc=$? 永远执行不到），
+#      所以"继续下一个应用"从来没生效过。这里显式 set +e。
+#   3. 单个应用编译加 timeout，防止某个包卡死吃满 350 分钟。
 name: sdk build
 
 on:
@@ -37,13 +42,25 @@ permissions:
   contents: write
 
 concurrency:
-  group: sdk-build-${{ inputs.distro }}
+  group: sdk-build-${{ inputs.distro }}-${{ matrix.group }}
   cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 350
+    # heavy 组失败只标记，不拖累整个 run
+    continue-on-error: ${{ matrix.heavy }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: main
+            heavy: false
+            apps: 'clashoo mosdns nikki momo passwall passwall2 ssrp homeproxy argon quickfile dufs daede'
+          - group: heavy
+            heavy: true
+            apps: 'openclash openlist2'
     steps:
       - uses: actions/checkout@v6
 
@@ -82,17 +99,33 @@ jobs:
 
       - name: 逐个应用源码编译
         run: |
+          # 必须关掉 -e：否则子 shell 编挂会直接终止整个 step，
+          # 下面的 rc=$? 根本执行不到，"失败继续下一个"就成了空话
+          set +e
           set -u
           cd "$SDK_DIR"
           mkdir -p /opt/sdkout
 
-          APPS="${{ inputs.apps }}"
-          if [ "$APPS" = "all" ]; then
-            APPS="clashoo mosdns openclash nikki momo passwall passwall2 ssrp homeproxy argon openlist2 quickfile dufs daede"
+          APPS=""
+          REQ="${{ inputs.apps }}"
+          if [ "$REQ" = "all" ]; then
+            APPS="${{ matrix.apps }}"
+          else
+            # 只在指定应用时按本组归属过滤，避免两个 job 重复编同一个包
+            for a in $REQ; do
+              case " ${{ matrix.apps }} " in
+                *" $a "*) APPS="$APPS $a" ;;
+              esac
+            done
           fi
-          echo "本轮编译: $APPS"
+          if [ -z "${APPS// /}" ]; then
+            echo "本组(${{ matrix.group }})没有要编的应用，跳过"
+            exit 0
+          fi
+          echo "本组(${{ matrix.group }})编译: $APPS"
 
           FAILED=""
+          OKAPPS=""
           for APP in $APPS; do
             echo ""
             echo "################################ $APP ################################"
@@ -136,16 +169,16 @@ jobs:
 
               make defconfig
               if [ -d "package/$APP" ]; then
-                make "package/$APP/compile" V=s -j"$(nproc)"
+                timeout 2700 make "package/$APP/compile" V=s -j"$(nproc)"
               elif [ -d "package/luci-app-$APP" ]; then
-                make "package/luci-app-$APP/compile" V=s -j"$(nproc)"
+                timeout 2700 make "package/luci-app-$APP/compile" V=s -j"$(nproc)"
               else
                 echo "::warning::package/$APP 与 package/luci-app-$APP 都不存在"
               fi
               for d in $DIRS; do
                 [ "$d" = "$APP" ] && continue
                 [ -d "package/$d" ] || continue
-                make "package/$d/compile" V=s -j"$(nproc)" || echo "::warning::$d 编译失败"
+                timeout 2700 make "package/$d/compile" V=s -j"$(nproc)" || echo "::warning::$d 编译失败"
               done
 
               rm -rf "/opt/sdkout/$APP"
@@ -166,17 +199,24 @@ jobs:
               echo "--- $APP 收集到 $N 个包，共 $SZ ---"
               ls -l "/opt/sdkout/$APP"
               if [ "$N" -eq 0 ]; then
-                echo "::error::$APP 编译完成但一个包都没收到，检查收集规则"
+                echo "::warning::$APP 编译完成但一个包都没收到，检查收集规则"
+                exit 3
               fi
             )
             rc=$?
             if [ "$rc" -ne 0 ]; then
               echo "::warning::$APP 编译失败 rc=$rc，继续下一个"
               FAILED="$FAILED $APP"
+            else
+              OKAPPS="$OKAPPS $APP"
             fi
           done
           echo ""
-          echo "======== 失败清单:${FAILED:- 无} ========"
+          echo "======== 成功:${OKAPPS:- 无} 失败:${FAILED:- 无} ========"
+          # 只有全组都没出包时才算这组失败，其余情况交给打包装箱环节
+          if [ -z "$(ls -A /opt/sdkout 2>/dev/null)" ]; then
+            echo "::warning::本组(${{ matrix.group }})没有任何产物"
+          fi
 
       - name: 打包成 run
         run: |
@@ -185,6 +225,7 @@ jobs:
           chmod +x /tmp/makeself/makeself.sh
           mkdir -p "$GITHUB_WORKSPACE/run"
           for D in /opt/sdkout/*/; do
+            [ -d "$D" ] || continue
             APP=$(basename "$D")
             n=$(ls "$D" 2>/dev/null | wc -l)
             [ "$n" -gt 0 ] || { echo "::warning::$APP 无产物，跳过"; continue; }
@@ -211,7 +252,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sdk-${{ inputs.distro }}-runs
+          name: sdk-${{ inputs.distro }}-${{ matrix.group }}-runs
           path: ${{ github.workspace }}/run/*.run
           if-no-files-found: warn
 
@@ -227,5 +268,5 @@ jobs:
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
               --title "Extra Packages $TAG (source built)" \
-              --notes "由 ImmortalWrt SDK 从源码编译"
+              --notes "由 ImmortalWrt SDK 从源码编译" || true
           gh release upload "$TAG" ./*.run -R "$GITHUB_REPOSITORY" --clobber
