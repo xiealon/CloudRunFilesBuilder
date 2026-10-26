@@ -41,16 +41,17 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: sdk-build-${{ inputs.distro }}-${{ matrix.group }}
-  cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 350
     # heavy 组失败只标记，不拖累整个 run
     continue-on-error: ${{ matrix.heavy }}
+    # 注意：workflow 级 concurrency 拿不到 matrix 上下文，会整份文件被判无效，
+    # 所以放在 job 级
+    concurrency:
+      group: sdk-build-${{ inputs.distro }}-${{ matrix.group }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
