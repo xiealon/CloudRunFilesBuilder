@@ -4,16 +4,19 @@
 #   24.10 -> extra-ipk（ipk）
 #   25.12 -> extra-apk（apk）
 #
-# apps 支持：
-#   单个      clashoo
-#   多个      "clashoo mosdns"
-#   全部      all
+# apps 支持：单个 clashoo / 多个 "clashoo mosdns" / 全部 all
 #
-# 2026-10-26 修复：
-#   GitHub Actions 的 run 默认是 `bash -eo pipefail`，子 shell 编挂会直接
-#   终止整个 step，`rc=$?` 永远执行不到 —— 这就是上一轮跑到 openclash 就整步
-#   死掉、后面的应用全没编的真正原因。这里显式 set +e。
-#   同时把 openclash / openlist2 排到最后，最脏的两个放最后，卡住也不影响别人。
+# ── 2026-10-26 v4 变更 ────────────────────────────────────────────────
+# 1) 收集阶段改成"依赖闭包"：旧规则只按包名前缀捡 ipk，导致 run 里缺
+#    geo2txt / v2ray-geoip / v2ray-geosite，用户装 luci-app-mosdns 时报
+#    cannot find dependency geo2txt。现在由 .github/scripts/depclose.py
+#    读 SDK 的 Packages 索引递归展开 Depends，把运行时依赖一起收进来；
+#    设备自带的基础包（libc / luci-base / kmod-* …）走白名单不进 run。
+# 2) mosdns 的 DIRS 加 geo2txt，并从 feeds 编 v2ray-geodata
+#    （产出 v2ray-geoip + v2ray-geosite 两个数据包）。
+# 3) 每个应用、每个 make 目标单独写日志，失败时自动 tail 关键报错，
+#    不用再事后去下 51MB 的 job 日志。
+# 4) install.sh 加 4 次重试：本地 ipk 互相依赖时 opkg 偶尔会因为顺序失败。
 name: sdk build
 
 on:
@@ -53,6 +56,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq zstd build-essential libncurses-dev rsync
+          python3 --version
 
       - name: 下载并解压 SDK
         run: |
@@ -81,6 +85,8 @@ jobs:
           ./scripts/feeds install -a
           echo "--- golang feed ---"
           ls feeds/packages/lang/golang/ 2>/dev/null | head -5 || echo "缺少 golang feed"
+          echo "--- geo 相关包 ---"
+          ls feeds/packages/net/ | grep -i v2ray || true
 
       - name: 逐个应用源码编译
         run: |
@@ -89,7 +95,9 @@ jobs:
           set +e
           set -u
           cd "$SDK_DIR"
-          mkdir -p /opt/sdkout
+          mkdir -p /opt/sdkout /tmp/blogs
+          DEPCLOSE="$GITHUB_WORKSPACE/.github/scripts/depclose.py"
+          ls -l "$DEPCLOSE"
 
           APPS="${{ inputs.apps }}"
           if [ "$APPS" = "all" ]; then
@@ -97,6 +105,22 @@ jobs:
             APPS="clashoo mosdns nikki momo passwall passwall2 ssrp homeproxy argon quickfile dufs daede openclash openlist2"
           fi
           echo "本轮编译: $APPS"
+
+          # mk <目标> <标签>：单独日志，失败自动提取关键行
+          mk() {
+            _t="$1"; _tag="$2"; _log="/tmp/blogs/$APP.$_tag.log"
+            if timeout 2700 make "$_t" V=s -j"$(nproc)" > "$_log" 2>&1; then
+              echo "   ok  make $_t"
+              return 0
+            fi
+            _rc=$?
+            echo "   !!  make $_t 失败 rc=$_rc"
+            echo "   ---- 末尾 30 行 ----"
+            tail -n 30 "$_log" 2>/dev/null
+            echo "   ---- 关键报错 ----"
+            grep -inE 'error:|Error [0-9]|No rule to make|fatal|Killed|not found|undefined reference|cannot find' "$_log" 2>/dev/null | tail -n 20
+            return $_rc
+          }
 
           FAILED=""
           OKAPPS=""
@@ -107,9 +131,12 @@ jobs:
               set -e
               rm -rf /tmp/src
               rm -rf "package/$APP" "package/luci-app-$APP"
+              EXTRA=""
               case "$APP" in
                 clashoo)   REPO=kenzok8/openwrt-clashoo;            BR=main;   DIRS="clashoo luci-app-clashoo" ;;
-                mosdns)    REPO=sbwml/luci-app-mosdns;              BR=v5;     DIRS="mosdns luci-app-mosdns" ;;
+                # geo2txt 是 luci-app-mosdns 的硬依赖（geosite.dat 转纯文本给 mosdns 用），
+                # 必须同仓一起编，否则用户装 luci 界面时 opkg 直接拒绝
+                mosdns)    REPO=sbwml/luci-app-mosdns;              BR=v5;     DIRS="mosdns luci-app-mosdns geo2txt"; EXTRA="feeds/packages/net/v2ray-geodata" ;;
                 openclash) REPO=vernesong/OpenClash;                BR=master; DIRS="luci-app-openclash" ;;
                 nikki)     REPO=nikkinikki-org/OpenWrt-nikki;       BR=main;   DIRS="nikki luci-app-nikki mihomo-meta" ;;
                 momo)      REPO=nikkinikki-org/OpenWrt-momo;        BR=main;   DIRS="momo luci-app-momo" ;;
@@ -129,7 +156,6 @@ jobs:
               echo "源码: $REPO @$BR"
               git clone --depth=1 -b "$BR" "https://github.com/$REPO" /tmp/src
               if [ -z "$DIRS" ]; then
-                # 仓库根目录本身就是一个包
                 cp -r /tmp/src "package/$APP"
               else
                 for d in $DIRS; do
@@ -141,38 +167,60 @@ jobs:
                 done
               fi
 
+              # feeds 里的额外包：先确保 feeds install 到位
+              for t in $EXTRA; do
+                case "$t" in
+                  feeds/*)
+                    FEED=$(echo "$t" | cut -d/ -f2)
+                    PN=$(echo "$t" | cut -d/ -f4)
+                    if [ ! -d "package/feeds/$FEED/$PN" ]; then
+                      echo ">> feeds install -p $FEED $PN"
+                      ./scripts/feeds install -p "$FEED" "$PN" || echo "::warning::feeds install $PN 失败"
+                    fi
+                    ;;
+                esac
+              done
+
               make defconfig
+
+              # 先编 feeds 额外包（数据包，便宜）
+              for t in $EXTRA; do
+                case "$t" in
+                  feeds/*)
+                    FEED=$(echo "$t" | cut -d/ -f2); PN=$(echo "$t" | cut -d/ -f4)
+                    TGT="package/feeds/$FEED/$PN"
+                    ;;
+                  *) TGT="$t" ;;
+                esac
+                [ -d "$TGT" ] || { echo "::warning::额外包目录不存在: $TGT"; continue; }
+                echo ">> 额外编译 $TGT"
+                mk "$TGT/compile" "extra_$(basename "$TGT")" || echo "::warning::$t 编译失败"
+              done
+
               if [ -d "package/$APP" ]; then
-                timeout 2700 make "package/$APP/compile" V=s -j"$(nproc)"
+                mk "package/$APP/compile" main || echo "::warning::$APP 主包编译失败"
               elif [ -d "package/luci-app-$APP" ]; then
-                timeout 2700 make "package/luci-app-$APP/compile" V=s -j"$(nproc)"
+                mk "package/luci-app-$APP/compile" main || echo "::warning::$APP 主包编译失败"
               else
                 echo "::warning::package/$APP 与 package/luci-app-$APP 都不存在"
               fi
               for d in $DIRS; do
                 [ "$d" = "$APP" ] && continue
                 [ -d "package/$d" ] || continue
-                timeout 2700 make "package/$d/compile" V=s -j"$(nproc)" || echo "::warning::$d 编译失败"
+                mk "package/$d/compile" "dep_$d" || echo "::warning::$d 编译失败"
               done
 
               rm -rf "/opt/sdkout/$APP"
               mkdir -p "/opt/sdkout/$APP"
-              # 只收本应用相关的包：SDK 编 luci 时会把 base 里几百个基础包
-              # 一起拉进 bin/packages，全收会让 run 从 24MB 涨到 222MB。
               PAT="^${APP}[_-]|^luci-app-${APP}[_-]|^luci-i18n-${APP}|^luci-theme-${APP}"
-              for d in $DIRS; do
-                PAT="$PAT|^${d}[_-]"
-              done
-              # find 输出的是 bin/packages/x86_64/base/xxx.ipk 这样的完整路径，
-              # 直接用 grep -E "^clashoo" 匹配行首永远落空，必须取 basename 再匹配。
-              find bin/packages -type f \( -name '*.ipk' -o -name '*.apk' \) \
-                | awk -F/ -v P="$PAT" '$NF ~ P' \
-                | while IFS= read -r f; do cp -v "$f" "/opt/sdkout/$APP"/; done
-              N=$(ls -1 "/opt/sdkout/$APP" 2>/dev/null | wc -l)
-              SZ=$(du -sh "/opt/sdkout/$APP" 2>/dev/null | cut -f1)
-              echo "--- $APP 收集到 $N 个包，共 $SZ ---"
+              for d in $DIRS; do PAT="$PAT|^${d}[_-]"; done
+              echo "收集规则: $PAT"
+              python3 "$DEPCLOSE" "$SDK_DIR" "$APP" "$PAT" "/opt/sdkout/$APP"
+              rc=$?
+              echo "--- $APP 收集结果 ---"
               ls -l "/opt/sdkout/$APP"
-              if [ "$N" -eq 0 ]; then
+              du -sh "/opt/sdkout/$APP"
+              if [ "$rc" -ne 0 ]; then
                 echo "::warning::$APP 编译完成但一个包都没收到，检查收集规则"
                 exit 3
               fi
@@ -209,7 +257,8 @@ jobs:
               [ "$nb" != "$b" ] && mv -f "$f" "$D/$nb.apk" && echo "规范化 $b.apk -> $nb.apk"
             done
             if [ "${{ inputs.distro }}" = "24.10" ]; then
-              printf '#!/bin/sh\nopkg update || exit 1\nopkg install ./*.ipk\n' > "$D/install.sh"
+              # 本地 ipk 互相依赖时 opkg 偶尔按顺序失败，重试几次即可
+              printf '#!/bin/sh\nopkg update || exit 1\nfor i in 1 2 3 4; do\n  opkg install ./*.ipk && exit 0\n  echo "第 $i 轮未完成，重试..."\n  sleep 1\ndone\nexit 1\n' > "$D/install.sh"
             else
               printf '#!/bin/sh\napk update || exit 1\napk add --allow-untrusted ./*.apk\n' > "$D/install.sh"
             fi
@@ -217,13 +266,20 @@ jobs:
             ls -l "$D"
             /tmp/makeself/makeself.sh "$D" "$GITHUB_WORKSPACE/run/${APP}_x86_64.run" "$APP" ./install.sh
           done
-          ls -l "$GITHUB_WORKSPACE/run"
+          ls -lh "$GITHUB_WORKSPACE/run"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sdk-${{ inputs.distro }}-runs
           path: ${{ github.workspace }}/run/*.run
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sdk-${{ inputs.distro }}-buildlogs
+          path: /tmp/blogs/*.log
           if-no-files-found: warn
 
       - name: 上传到 release
@@ -238,5 +294,5 @@ jobs:
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
               --title "Extra Packages $TAG (source built)" \
-              --notes "由 ImmortalWrt SDK 从源码编译"
+              --notes "由 ImmortalWrt SDK 从源码编译，run 内已含运行时依赖闭包"
           gh release upload "$TAG" ./*.run -R "$GITHUB_REPOSITORY" --clobber
