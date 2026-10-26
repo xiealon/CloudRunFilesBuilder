@@ -9,14 +9,11 @@
 #   多个      "clashoo mosdns"
 #   全部      all
 #
-# 2026-10-26 改动：
-#   1. 拆成两个并行 job（matrix）：
-#        main  -> 常规应用
-#        heavy -> openclash / openlist2（依赖脏、最重），失败不影响 main，也不会把整个 run 拖红
-#   2. 关键修复：GitHub Actions 的 run 默认是 `bash -eo pipefail`，
-#      之前子 shell 编挂会直接把整个 step 干掉（rc=$? 永远执行不到），
-#      所以"继续下一个应用"从来没生效过。这里显式 set +e。
-#   3. 单个应用编译加 timeout，防止某个包卡死吃满 350 分钟。
+# 2026-10-26 修复：
+#   GitHub Actions 的 run 默认是 `bash -eo pipefail`，子 shell 编挂会直接
+#   终止整个 step，`rc=$?` 永远执行不到 —— 这就是上一轮跑到 openclash 就整步
+#   死掉、后面的应用全没编的真正原因。这里显式 set +e。
+#   同时把 openclash / openlist2 排到最后，最脏的两个放最后，卡住也不影响别人。
 name: sdk build
 
 on:
@@ -41,27 +38,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: sdk-build-${{ inputs.distro }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 350
-    # heavy 组失败只标记，不拖累整个 run
-    continue-on-error: ${{ matrix.heavy }}
-    # 注意：workflow 级 concurrency 拿不到 matrix 上下文，会整份文件被判无效，
-    # 所以放在 job 级
-    concurrency:
-      group: sdk-build-${{ inputs.distro }}-${{ matrix.group }}
-      cancel-in-progress: false
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - group: main
-            heavy: false
-            apps: 'clashoo mosdns nikki momo passwall passwall2 ssrp homeproxy argon quickfile dufs daede'
-          - group: heavy
-            heavy: true
-            apps: 'openclash openlist2'
     steps:
       - uses: actions/checkout@v6
 
@@ -100,30 +84,19 @@ jobs:
 
       - name: 逐个应用源码编译
         run: |
-          # 必须关掉 -e：否则子 shell 编挂会直接终止整个 step，
-          # 下面的 rc=$? 根本执行不到，"失败继续下一个"就成了空话
+          # 必须关 -e：否则子 shell 编挂会终止整个 step，rc=$? 执行不到，
+          # "失败继续下一个"形同虚设
           set +e
           set -u
           cd "$SDK_DIR"
           mkdir -p /opt/sdkout
 
-          APPS=""
-          REQ="${{ inputs.apps }}"
-          if [ "$REQ" = "all" ]; then
-            APPS="${{ matrix.apps }}"
-          else
-            # 只在指定应用时按本组归属过滤，避免两个 job 重复编同一个包
-            for a in $REQ; do
-              case " ${{ matrix.apps }} " in
-                *" $a "*) APPS="$APPS $a" ;;
-              esac
-            done
+          APPS="${{ inputs.apps }}"
+          if [ "$APPS" = "all" ]; then
+            # openclash / openlist2 依赖最脏，排最后
+            APPS="clashoo mosdns nikki momo passwall passwall2 ssrp homeproxy argon quickfile dufs daede openclash openlist2"
           fi
-          if [ -z "${APPS// /}" ]; then
-            echo "本组(${{ matrix.group }})没有要编的应用，跳过"
-            exit 0
-          fi
-          echo "本组(${{ matrix.group }})编译: $APPS"
+          echo "本轮编译: $APPS"
 
           FAILED=""
           OKAPPS=""
@@ -214,10 +187,6 @@ jobs:
           done
           echo ""
           echo "======== 成功:${OKAPPS:- 无} 失败:${FAILED:- 无} ========"
-          # 只有全组都没出包时才算这组失败，其余情况交给打包装箱环节
-          if [ -z "$(ls -A /opt/sdkout 2>/dev/null)" ]; then
-            echo "::warning::本组(${{ matrix.group }})没有任何产物"
-          fi
 
       - name: 打包成 run
         run: |
@@ -253,7 +222,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sdk-${{ inputs.distro }}-${{ matrix.group }}-runs
+          name: sdk-${{ inputs.distro }}-runs
           path: ${{ github.workspace }}/run/*.run
           if-no-files-found: warn
 
@@ -269,5 +238,5 @@ jobs:
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
               --title "Extra Packages $TAG (source built)" \
-              --notes "由 ImmortalWrt SDK 从源码编译" || true
+              --notes "由 ImmortalWrt SDK 从源码编译"
           gh release upload "$TAG" ./*.run -R "$GITHUB_REPOSITORY" --clobber
