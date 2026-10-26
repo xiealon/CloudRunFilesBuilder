@@ -1,0 +1,105 @@
+# 从自己 fork 的仓库同步包，不再依赖任何上游 release。
+#
+#   源：xiealon/store/run/x86   （24.10 ipk 体系）  ->  release extra-ipk
+#       xiealon/apk/run/x86     （25.12 apk 体系）  ->  release extra-apk
+#
+# 源里两类东西：
+#   1. 已经打好的 <app>_<版本>_<arch>.run  —— 直接改名 <app>_x86_64.run，不二次打包
+#   2. 裸包目录 <app>/ 里面是一堆 .ipk/.apk —— 现场加 install.sh 用 makeself 打包
+#
+# 目标文件名统一成 <app>_x86_64.run，供 ImmortalWrt-ImageBuilder 直链。
+name: sync from fork
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: '是否上传到 release'
+        required: true
+        default: true
+        type: boolean
+      dry_run:
+        description: '只打印映射，不下载不上传'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-fork
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 makeself
+        run: |
+          set -eu
+          git clone --depth=1 https://github.com/megastep/makeself.git /tmp/makeself
+          chmod +x /tmp/makeself/makeself.sh /tmp/makeself/makeself-header.sh
+          echo "MAKESELF=/tmp/makeself/makeself.sh" >> "$GITHUB_ENV"
+          /tmp/makeself/makeself.sh --help 2>&1 | head -3 || true
+
+      - name: 只打印映射
+        if: inputs.dry_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/sync_fork.py --dry-run
+
+      - name: 同步 24.10（ipk 体系）
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          python3 .github/scripts/sync_fork.py --repo xiealon/store --arch x86 --suffix x86_64 --outdir out/ipk
+          echo "=== out/ipk ==="
+          ls -lh out/ipk/*.run | head -50
+
+      - name: 同步 25.12（apk 体系）
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          python3 .github/scripts/sync_fork.py --repo xiealon/apk --arch x86 --suffix x86_64 --outdir out/apk
+          echo "=== out/apk ==="
+          ls -lh out/apk/*.run | head -50
+
+      - name: 上传到 release
+        if: ${{ !inputs.dry_run && inputs.upload }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          for T in extra-ipk extra-apk; do
+            gh release view "$T" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+              gh release create "$T" -R "$GITHUB_REPOSITORY" \
+                --title "Extra Packages $T (fixed filenames)" \
+                --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。来源：xiealon/store、xiealon/apk"
+          done
+          gh release upload extra-ipk out/ipk/*.run -R "$GITHUB_REPOSITORY" --clobber
+          gh release upload extra-apk out/apk/*.run -R "$GITHUB_REPOSITORY" --clobber
+
+      - name: 汇总
+        if: always()
+        run: |
+          {
+            echo "## 同步结果"
+            echo "| 标签 | 文件 | 大小 |"
+            echo "|---|---|---|"
+            for d in out/ipk out/apk; do
+              [ -d "$d" ] || continue
+              for f in "$d"/*.run; do
+                [ -e "$f" ] || continue
+                echo "| $d | $(basename "$f") | $(du -h "$f" | cut -f1) |"
+              done
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
