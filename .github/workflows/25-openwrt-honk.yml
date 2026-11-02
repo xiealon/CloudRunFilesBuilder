@@ -123,10 +123,18 @@ jobs:
         with:
           tag_name: ${{ env.TAG }}
           name: ${{ env.RELEASE_NAME }}
-          files: makeself/*.run
+          # makeself/*.run    → 路由器上直接跑的自解压包（三架构）
+          # makeself/x86/*.apk → 散装 apk，给 ImageBuilder 构建时直接装进固件，
+          #                      这样固件侧不必再挂 openwrt.daeuniverse.org 的第三方源
+          files: |
+            makeself/*.run
+            makeself/x86/*.apk
           token: ${{ secrets.GITHUB_TOKEN }}
           body: |
             **honk ${{ env.VERSION }}** — OpenWrt 25.12 自解压安装包
+
+            **两类产物**：`25-openwrt-honk-*.run` 三架构自解压包（路由器上直接跑）；
+            `honk-*.apk` 等 5 个 x86_64 散装 apk（给 ImageBuilder 构建时装进固件）。
 
             | 包 | 说明 |
             |---|---|
