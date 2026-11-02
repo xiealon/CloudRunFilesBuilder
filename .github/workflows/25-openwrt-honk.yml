@@ -24,7 +24,7 @@ on:
         required: false
         default: 'https://openwrt.daeuniverse.org/25.12/packages'
       tag_name:
-        description: 'Release tag（留空 = honk-当天日期）'
+        description: 'Release tag（留空 = honk-apk，固定覆盖）'
         required: false
         default: ''
 
@@ -110,7 +110,9 @@ jobs:
           if [ -n "$IN_TAG" ]; then
               TAG="$IN_TAG"
           else
-              TAG="honk-$(date -u -d '+8 hour' +'%Y-%m-%d')"
+              # 固定 tag，与仓库里 extra-apk / extra-ipk / lxc-latest 的风格一致：
+              # 永远只有一个 Release，每次构建覆盖 assets，不累积日期 tag。
+              TAG="honk-apk"
           fi
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "RELEASE_NAME=honk ${VERSION} · $(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M')" >> $GITHUB_ENV
