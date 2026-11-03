@@ -1,0 +1,5 @@
+eb7477a5a63b023a62face3b045769409eac079b19c4d8bf2741bdcf395feaae  immortalwrt-25.12.2-x86-64-generic-kernel.bin
+e5557bbbd49c7e8d6cb4a885ed95a547c1426504f7780783391fce5d5341fd2b  immortalwrt-25.12.2-x86-64-generic-squashfs-combined-efi.img.gz
+c2e246fd5930168b5b99dad648eadb3beecdcfcb293057453852f235993b77ce  immortalwrt-25.12.2-x86-64-generic-squashfs-combined.img.gz
+3f650b421e674dd336569d460bc8622a2c1ec69094618860e45af14a9ce8312c  immortalwrt-25.12.2-x86-64-generic-squashfs-rootfs.img.gz
+5b03aeed85308fdd3a7ec4f98064fe02687707400032ff2143beca467cdab796  sha256sums
