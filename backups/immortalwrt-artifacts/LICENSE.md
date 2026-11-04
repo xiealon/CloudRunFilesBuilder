@@ -1,6 +1,8 @@
 # MIT License
 
-**Copyright (c) 2026 xiealon**
+**Copyright (c) 2026-11-05 xiealon**
+
+> 最后更新：2026-11-05 06:00（Asia/Shanghai）
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
