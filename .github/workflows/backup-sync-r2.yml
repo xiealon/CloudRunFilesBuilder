@@ -1,0 +1,158 @@
+name: backup-sync-r2
+
+# 把 immortalwrt-artifacts 三个 r2 release 的产物，
+# 同步到本仓库的 backup-immortalwrt-artifacts-20261104 release 与 25.12-honk-r2 分支。
+# 走 GitHub 内网，不占本地带宽。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 检出 25.12-honk-r2
+        uses: actions/checkout@v4
+        with:
+          ref: 25.12-honk-r2
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 下载 r2 产物
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dl && cd /tmp/dl
+          for tag in v25.12.2-ib-x86-64-r2 v25.12.2-pkg-x86-64-r2 v25.12.2-fw-x86-64-r2; do
+            echo "==> $tag"
+            gh release download "$tag" -R xiealon/immortalwrt-artifacts -D . --clobber
+          done
+          echo "--- 下载结果 ---"
+          ls -l
+          echo "--- 校验 ---"
+          sha256sum -c sha256sums --ignore-missing || true
+
+      - name: 铺到 backups 目录
+        run: |
+          set -euo pipefail
+          B=backups/immortalwrt-artifacts
+          rm -rf "$B"
+          mkdir -p "$B/imagebuilder" "$B/packages-x86_64" "$B/firmware-x86_64"
+
+          cp -f /tmp/dl/immortalwrt-imagebuilder-25.12.2-x86-64.Linux-x86_64.tar.zst "$B/imagebuilder/"
+          cp -f /tmp/dl/sha256sums "$B/imagebuilder/"
+
+          cp -f /tmp/dl/packages-x86_64-25.12.2.tar.zst "$B/packages-x86_64/"
+          cp -f /tmp/dl/sha256sums "$B/packages-x86_64/"
+
+          cp -f /tmp/dl/immortalwrt-25.12.2-x86-64-generic-* "$B/firmware-x86_64/"
+          cp -f /tmp/dl/sha256sums "$B/firmware-x86_64/"
+
+          # GitHub 单文件 100 MiB 限制 → 拆 75,000,000 B 一片
+          cd "$B/packages-x86_64"
+          split -b 75000000 -d -a 2 packages-x86_64-25.12.2.tar.zst packages-x86_64-25.12.2.tar.zst.part-
+          sha256sum packages-x86_64-25.12.2.tar.zst > packages-x86_64-25.12.2.tar.zst.sha256
+          rm -f packages-x86_64-25.12.2.tar.zst
+          ls -l
+
+      - name: 生成每目录 SHA256SUMS 与 README
+        run: |
+          set -euo pipefail
+          B=backups/immortalwrt-artifacts
+          cd "$B/imagebuilder" && sha256sum * > SHA256SUMS && cat SHA256SUMS
+          cd "../firmware-x86_64" && sha256sum * > SHA256SUMS && cat SHA256SUMS
+          cd "../packages-x86_64" && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+          cd ..
+          cat > README.md <<'EOF'
+          # immortalwrt-artifacts 备份（r2，内核 26ed6bc1）
+
+          本目录是 `xiealon/immortalwrt-artifacts` 三个 r2 release 的镜像副本。
+
+          | 目录 | 内容 |
+          |---|---|
+          | `imagebuilder/` | ImageBuilder tar.zst + sha256sums + SHA256SUMS |
+          | `packages-x86_64/` | pkg 拆片 part-00 ~ part-04 + sha256sums + SHA256SUMS |
+          | `firmware-x86_64/` | kernel.bin + 3 个 img.gz + sha256sums + SHA256SUMS |
+
+          ## 合并拆片
+
+          ```sh
+          cat packages-x86_64-25.12.2.tar.zst.part-0* > packages-x86_64-25.12.2.tar.zst
+          sha256sum -c packages-x86_64-25.12.2.tar.zst.sha256
+          ```
+
+          ## 完整文件
+
+          不想合并的，直接去 Release `backup-immortalwrt-artifacts-20261104`，那里是完整文件。
+
+          ## 内核
+
+          kernel 6.12.103，hash `26ed6bc1347f7e9e86ff98fe27513539`。
+
+          ## 采集时间
+
+          2026-11-05（Asia/Shanghai）
+          EOF
+
+      - name: 提交并推送分支
+        run: |
+          set -euo pipefail
+          git config user.name "xiealon"
+          git config user.email "xiealon@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "无变化，跳过提交"
+          else
+            git commit -m "大肥鱼"
+            git push origin HEAD:25.12-honk-r2
+          fi
+          echo "--- 分支目录 ---"
+          du -sh backups/immortalwrt-artifacts/*
+
+      - name: 同步到 20261104 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          RID=434154662
+          echo "==> 先清空该 release 现有资产"
+          gh api "repos/${{ github.repository }}/releases/$RID/assets" --jq '.[].id' | while read -r aid; do
+            [ -n "$aid" ] && gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$aid" && echo "  删 $aid"
+          done
+          echo "==> 上传 7 个文件"
+          for f in \
+            immortalwrt-imagebuilder-25.12.2-x86-64.Linux-x86_64.tar.zst \
+            packages-x86_64-25.12.2.tar.zst \
+            immortalwrt-25.12.2-x86-64-generic-kernel.bin \
+            immortalwrt-25.12.2-x86-64-generic-squashfs-combined-efi.img.gz \
+            immortalwrt-25.12.2-x86-64-generic-squashfs-combined.img.gz \
+            immortalwrt-25.12.2-x86-64-generic-squashfs-rootfs.img.gz \
+            sha256sums ; do
+            echo "  -> $f"
+            gh release upload backup-immortalwrt-artifacts-20261104 "/tmp/dl/$f" --clobber -R "${{ github.repository }}"
+          done
+          echo "==> 上传后核对"
+          gh api "repos/${{ github.repository }}/releases/$RID" --jq '.assets[] | "\(.name)\t\(.size)\t\(.state)"'
+
+      - name: 删除 20261103 旧 release 与 25.12-honk 旧分支
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "==> 删 release backup-immortalwrt-artifacts-20261103"
+          OLDID=$(gh api "repos/${{ github.repository }}/releases/tags/backup-immortalwrt-artifacts-20261103" --jq '.id' || true)
+          if [ -n "$OLDID" ] && [ "$OLDID" != "null" ]; then
+            gh api -X DELETE "repos/${{ github.repository }}/releases/$OLDID" && echo "  已删 release $OLDID"
+          else
+            echo "  不存在，跳过"
+          fi
+          echo "==> 删分支 25.12-honk（保留 25.12-honk-r2 / honk-apk / extra-*）"
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/25.12-honk" && echo "  已删分支 25.12-honk" || echo "  删除失败或不存在"
+          echo "==> 剩余分支"
+          gh api "repos/${{ github.repository }}/branches?per_page=50" --jq '.[].name'
