@@ -86,4 +86,11 @@ sha256sum -c packages-x86_64/packages-x86_64-25.12.2.tar.zst.sha256
 
 ## 许可
 
-MIT，见本目录的 `LICENSE` 与 `LICENSE.md`。
+本目录内容分两类：
+
+| 内容 | 许可 | 文件 |
+|---|---|---|
+| 构建产物（IB 包、apk 集合、固件镜像） | **GPL-2.0** | `LICENSE-GPL-2.0` |
+| 校验文件、说明文档 | **MIT** | `LICENSE` / `LICENSE.md` |
+
+Copyright (c) 2026-11-05 xiealon
