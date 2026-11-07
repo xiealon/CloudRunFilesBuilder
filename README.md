@@ -1,77 +1,44 @@
-![Github](https://img.shields.io/badge/Passwall.run-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge) 
-![Github](https://img.shields.io/badge/passwall2.run-123456?logo=github&logoColor=fff&labelColor=AB5ED8&style=for-the-badge)
-![Github](https://img.shields.io/badge/openclash.run-123456?logo=github&logoColor=fff&labelColor=red&style=for-the-badge) 
-![Github](https://img.shields.io/badge/SSRP.run-123456?logo=github&logoColor=fff&labelColor=blue&style=for-the-badge) <br> 
-![Github](https://img.shields.io/badge/nikki.run-123456?logo=github&logoColor=fff&labelColor=yellow&style=for-the-badge) 
-![Github](https://img.shields.io/badge/momo.run-123456?logo=github&logoColor=fff&labelColor=5cb85c&style=for-the-badge) 
-![Github](https://img.shields.io/badge/MOSDNS.run-123456?logo=github&logoColor=fff&labelColor=FF7F00&style=for-the-badge) 
-![Github](https://img.shields.io/badge/homeproxy.run-123456?logo=github&logoColor=fff&labelColor=3ae07c&style=for-the-badge)
-![Github](https://img.shields.io/badge/dae.run-123456?logo=github&logoColor=fff&labelColor=4bccdf&style=for-the-badge)<br>
-![Github](https://img.shields.io/badge/AdGuardHome.run-123456?logo=github&logoColor=fff&labelColor=8470FF&style=for-the-badge) 
-![Github](https://img.shields.io/badge/STORE商店.run-123456?logo=github&logoColor=fff&labelColor=9400D3&style=for-the-badge) 
-![Github](https://img.shields.io/badge/ARGON主题.run-123456?logo=github&logoColor=fff&labelColor=1E90FF&style=for-the-badge) 
-![Github](https://img.shields.io/badge/DUFS文件服务器.run-123456?logo=github&logoColor=fff&labelColor=00ae9d&style=for-the-badge)
-![Github](https://img.shields.io/badge/OPENLIST2.run-123456?logo=github&logoColor=000&labelColor=ffff00&style=for-the-badge)
-# RunFilesBuilder 
+# CloudRunFilesBuilder · 备份分支 `25.12-honk-r2`
 
+本分支**只存放备份**，不含任何构建代码、脚本与工作流。
 
-# [每日构建 DailyBuild] 👇🏻 [【点此处讨论】](https://github.com/wukongdaily/RunFilesBuilder/discussions/41)
-https://github.com/wkccd/CloudRunFilesBuilder/releases
+## 目录
 
-【[ENGLISH](https://github.com/wukongdaily/RunFilesBuilder/blob/master/README_en.md)】
+| 路径 | 内容 |
+|---|---|
+| `backups/immortalwrt-artifacts/` | `xiealon/immortalwrt-artifacts` 三个 r2 release 的镜像副本 |
 
->> 这是一个工作流。同步各位大佬项目里最新编译的ipk文件 生成适用于iStoreOS/OpenWrt 用的run自解压包<br>
->> 本质上是利用makeslef,将ipk和shell文件打包成自解压程序。<br>
->> iStoreOS 可以在iStore商店手动安装<br>
->> ImmortalWrt或者其他OpenWrt 可下载后 使用 `sh xxx.run `来安装<br>
->> 使用 `sh xxx.run --target dir --noexec ` 只解压到dir目录 不执行安装
-> <img src="https://github.com/user-attachments/assets/3f5dabba-1efa-4e67-bf5b-86a27c114902" height=40>
+详细校验表、恢复方式与许可说明见
+[`backups/immortalwrt-artifacts/README.md`](backups/immortalwrt-artifacts/README.md)。
 
-## 实现原理和操作指南
-[![操作步骤](https://img.shields.io/badge/YouTube-123456?logo=youtube&labelColor=ff0000)](https://youtu.be/o0TN8LV01i4) https://www.youtube.com/watch?v=o0TN8LV01i4
+## 内容一览
 
-## 原理解析
-https://wkdaily.cpolar.cn/archives/makerun
-## run文件安装方法
-## Install by iStore 
-![1](https://github.com/user-attachments/assets/04e505cb-a217-4f52-b5c2-cbf68d297093)
+| 子目录 | 文件 |
+|---|---|
+| `imagebuilder/` | ImageBuilder `tar.zst` + `sha256sums` + `SHA256SUMS` |
+| `packages-x86_64/` | `packages-x86_64-25.12.2.tar.zst` 分片 `part-00 ~ part-04` + 校验文件 |
+| `firmware-x86_64/` | `kernel.bin` + 3 个 `img.gz` + 校验文件 |
 
+合计 **21 个文件 / 671.8 MB**。
 
+## 合并分片
 
-## Install By Command
-> Like This (Immortalwrt 等其他OpenWrt)
-```bash
-wget -O xxx.run <run下载地址>
-sh xxx.run
+```sh
+cd backups/immortalwrt-artifacts/packages-x86_64
+cat packages-x86_64-25.12.2.tar.zst.part-0* > packages-x86_64-25.12.2.tar.zst
+sha256sum -c packages-x86_64-25.12.2.tar.zst.sha256
 ```
 
-## Immortalwrt 如何安装iStore商店
-```
-wget -qO imm.sh https://cafe.cpolar.top/wkdaily/zero3/raw/branch/main/zero3/imm.sh && chmod +x imm.sh && ./imm.sh
+合并结果 `7af7a3a914ae3876e32890150c7bf001a80d160a0ee6769796fc25669478c1a4`，
+与 release 里的完整 tar 逐字节相同。
 
-```
+## 内核与采集时间
 
+- 内核 **6.12.103**，hash `26ed6bc1347f7e9e86ff98fe27513539`
+- 采集于 **2026-11-05**（Asia/Shanghai）
 
+## 说明
 
-<a href="https://wkdaily.cpolar.top/01" target="_blank">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
-       alt="Buy Me A Coffee"
-       style="width:20%; height:auto;">
-</a>
-
-<details>
-<summary><h2>🍭鸣谢和引用的项目 👇🏿</h2></summary>
-  
-> 【打包】https://github.com/megastep/makeself
-> > 【引用】https://github.com/AdguardTeam/AdGuardHome/releases/latest<br>
-> > 【引用】https://dl.openwrt.ai<br>
-> > 【引用】https://github.com/nikkinikki-org/OpenWrt-nikki<br>
-> > 【引用】https://github.com/nikkinikki-org/OpenWrt-momo<br>
-> > 【引用】https://github.com/sbwml/luci-app-mosdns<br>
-> > 【引用】https://github.com/sbwml/luci-app-openlist2<br>
-> > 【引用】https://downloads.immortalwrt.org<br>
-> > 【引用】https://github.com/Openwrt-Passwall/openwrt-passwall<br>
-> > 【引用】https://github.com/Openwrt-Passwall/openwrt-passwall2<br>
-> > 【引用】https://github.com/vernesong/OpenClash<br>
-
-
+- 本分支**不参与构建**，没有任何 workflow，也不会被定时任务触发。
+- 主仓库发布被删除或资产被同名替换时，用本分支顶回去。
+- 构建代码在 `master`、`extra-apk`、`extra-ipk`、`honk-apk` 等分支，与本分支无关。
