@@ -1,0 +1,133 @@
+name: Backup honk beta5
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout backup branch
+        uses: actions/checkout@v4
+        with:
+          ref: 25.12-honk-r2
+          fetch-depth: 1
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mkdir -p /tmp/dl
+          gh release download honk-apk --repo "${{ github.repository }}" --dir /tmp/dl --clobber
+          echo "=== 下载结果 ==="
+          ls -la /tmp/dl
+
+      - name: Assemble backup folder
+        run: |
+          set -e
+          D="backups/honk-0.1.0_beta5-r1"
+          mkdir -p "$D"
+          cp /tmp/dl/*beta5* "$D"/
+          cp /tmp/dl/luci-app-honk-26.307.*.apk "$D"/
+          cp /tmp/dl/luci-lib-daeuniverse-26.307.*.apk "$D"/
+          cp /tmp/dl/luci-i18n-daeuniverse-zh-cn-26.307.*.apk "$D"/
+          cp /tmp/dl/vmlinux-btf-builtin-1-r1.apk "$D"/
+          cd "$D"
+          sha256sum *.run *.apk > SHA256SUMS
+          echo "=== 归档文件 ==="
+          ls -la
+
+      - name: Write README
+        run: |
+          set -e
+          D="backups/honk-0.1.0_beta5-r1"
+          cd "$D"
+          TOTAL=0
+          for f in *.run *.apk; do TOTAL=$((TOTAL + $(stat -c%s "$f"))); done
+          MB=$(awk "BEGIN{printf \"%.2f\", $TOTAL/1048576}")
+          {
+            echo "# honk 0.1.0_beta5-r1 · 全部产物备份"
+            echo ""
+            echo "本目录备份 **honk 0.1.0_beta5-r1** 的全部 **8 个** release 资产，来源为本仓库"
+            echo "release [\`honk-apk\`](https://github.com/${{ github.repository }}/releases/tag/honk-apk)，"
+            echo "对应上游 [\`daeuniverse/honk\` v0.1.0-beta.5](https://github.com/daeuniverse/honk/releases/tag/v0.1.0-beta.5)。"
+            echo ""
+            echo "合计 **8 个文件 / ${MB} MB**。"
+            echo ""
+            echo "> 上一代 \`0.1.0_beta4-r3\` 仍在同级目录 \`backups/honk-0.1.0_beta4-r3/\`。"
+            echo ""
+            echo "## 文件与校验"
+            echo ""
+            echo "| 文件 | 字节 | sha256 |"
+            echo "|---|---|---|"
+            for f in *.run *.apk; do
+              s=$(sha256sum "$f" | cut -d' ' -f1)
+              b=$(stat -c%s "$f")
+              echo "| \`$f\` | $b | \`$s\` |"
+            done
+            echo ""
+            echo "## 两类产物"
+            echo ""
+            echo "**一、自解压包（3 个 \`.run\`，三架构）**：路由器上直接跑"
+            echo ""
+            echo '```sh'
+            echo "chmod +x 25-openwrt-honk-0.1.0_beta5-r1-x86_64.run"
+            echo "./25-openwrt-honk-0.1.0_beta5-r1-x86_64.run"
+            echo '```'
+            echo ""
+            echo "**二、散装 apk（5 个，x86_64）**：给 ImageBuilder 装进固件，即 \`_PA_HONK\` 保护组五件套"
+            echo ""
+            echo "| 包 | 说明 |"
+            echo "|---|---|"
+            echo "| \`honk\` | eBPF 透明代理引擎（dae 的独立实现） |"
+            echo "| \`luci-app-honk\` | LuCI 界面（服务 → Honk） |"
+            echo "| \`luci-lib-daeuniverse\` | LuCI 依赖库 |"
+            echo "| \`luci-i18n-daeuniverse-zh-cn\` | 中文翻译 |"
+            echo "| \`vmlinux-btf-builtin\` | BTF 哨兵（1 B，装前检查 \`/sys/kernel/btf/vmlinux\`） |"
+            echo ""
+            echo "## 启用"
+            echo ""
+            echo '```sh'
+            echo "uci set honk.config.enabled=1 && uci commit honk"
+            echo "/etc/init.d/honk enable && /etc/init.d/honk start"
+            echo '```'
+            echo ""
+            echo "## 要求与冲突"
+            echo ""
+            echo "- 内核 **>= 6.12** 且 \`CONFIG_DEBUG_INFO_BTF=y\`"
+            echo "- **honk 与 dae / daed 互斥**：都占用 \`dae0\` 设备与 \`daens\` 命名空间"
+            echo ""
+            echo "## 校验"
+            echo ""
+            echo '```sh'
+            echo "sha256sum -c SHA256SUMS"
+            echo '```'
+            echo ""
+            echo "## 关于 Source code"
+            echo ""
+            echo "release 页面上的 \`Source code (zip/tar.gz)\` 是 GitHub 按 tag 自动打包的仓库源码快照，"
+            echo "不是 honk 产物，因此不在本目录备份。"
+            echo ""
+            echo "## 归档说明"
+            echo ""
+            echo "- 本目录只存产物，不含源码"
+            echo "- release 若被删除或资产被同名替换，用本目录顶回去"
+            echo "- 采集于 **2026-11-08**（Asia/Shanghai）"
+          } > README.md
+          echo "=== README 前 12 行 ==="
+          head -12 README.md
+
+      - name: Commit and push
+        run: |
+          set -e
+          git config user.name "xiealon"
+          git config user.email "xiealon@users.noreply.github.com"
+          git add backups/honk-0.1.0_beta5-r1
+          git status --short
+          git commit -m "feat(backup): 备份 honk 0.1.0_beta5-r1 全部 8 个产物"
+          git push origin HEAD:25.12-honk-r2
+          echo "=== 推送完成 ==="
+          git log --oneline -3
