@@ -1,7 +1,7 @@
 name: backup-sync-r2
 
 # 把 immortalwrt-artifacts 三个 r2 release 的产物，
-# 同步到本仓库的 backup-immortalwrt-artifacts-20261104 release 与 25.12-honk-r2 分支。
+# 同步到本仓库的 backup-immortalwrt-artifacts-20261104 release 与 Backup 分支。
 # 走 GitHub 内网，不占本地带宽。
 
 on:
@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - name: 检出 25.12-honk-r2
+      - name: 检出 Backup
         uses: actions/checkout@v4
         with:
-          ref: 25.12-honk-r2
+          ref: Backup
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -110,7 +110,7 @@ jobs:
             echo "无变化，跳过提交"
           else
             git commit -m "大肥鱼"
-            git push origin HEAD:25.12-honk-r2
+            git push origin HEAD:Backup
           fi
           echo "--- 分支目录 ---"
           du -sh backups/immortalwrt-artifacts/*
@@ -152,7 +152,7 @@ jobs:
           else
             echo "  不存在，跳过"
           fi
-          echo "==> 删分支 25.12-honk（保留 25.12-honk-r2 / honk-apk / extra-*）"
+          echo "==> 删分支 25.12-honk（保留 Backup / honk-apk / extra-*）"
           gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/25.12-honk" && echo "  已删分支 25.12-honk" || echo "  删除失败或不存在"
           echo "==> 剩余分支"
           gh api "repos/${{ github.repository }}/branches?per_page=50" --jq '.[].name'
