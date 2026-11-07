@@ -1,0 +1,59 @@
+name: backup-crowdsec
+
+# 把 Release lxc-latest 的 crowdsec 容器包备份到 Backup 分支 backups/crowdsec/
+# 111,841,547 B 超 GitHub 100 MiB 单文件上限，按 40,000,000 B 切 3 卷。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 检出 Backup
+        uses: actions/checkout@v4
+        with:
+          ref: Backup
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 下载 crowdsec 容器包
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dl
+          gh release download lxc-latest -R "${{ github.repository }}" -D /tmp/dl --clobber \
+            -p 'lxc-crowdsec.tar.gz' -p 'MANIFEST.json'
+          ls -l /tmp/dl
+
+      - name: 分卷并写校验
+        run: |
+          set -euo pipefail
+          B=backups/crowdsec
+          mkdir -p "$B"
+          cp -f /tmp/dl/MANIFEST.json "$B/"
+          split -b 40000000 -d -a 2 /tmp/dl/lxc-crowdsec.tar.gz "$B/lxc-crowdsec.tar.gz.part-"
+          sha256sum /tmp/dl/lxc-crowdsec.tar.gz | sed 's#/tmp/dl/##' > "$B/lxc-crowdsec.tar.gz.sha256"
+          ls -l "$B"
+          cat "$B/lxc-crowdsec.tar.gz.sha256"
+          cd "$B" && sha256sum -c lxc-crowdsec.tar.gz.sha256 || true
+
+      - name: 提交并推送
+        run: |
+          set -euo pipefail
+          git config user.name "xiealon"
+          git config user.email "xiealon@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "无变化，跳过提交"
+          else
+            git commit -m "backup: crowdsec 容器包（3 分卷）"
+            git push origin HEAD:Backup
+          fi
+          echo "--- 目录 ---"
+          ls -l backups/crowdsec
