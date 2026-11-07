@@ -10,8 +10,15 @@ jobs:
   swap:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
+      - name: Checkout master
         uses: actions/checkout@v6
+
+      - name: Fetch backup files from 25.12-honk-r2
+        run: |
+          set -euo pipefail
+          git fetch --depth 1 origin 25.12-honk-r2
+          git checkout FETCH_HEAD -- backups/honk-0.1.0_beta4-r3
+          ls -l backups/honk-0.1.0_beta4-r3/
 
       - name: Upload beta4-r3 assets and retitle
         env:
@@ -21,14 +28,15 @@ jobs:
           TAG=honk-apk
           SRC=backups/honk-0.1.0_beta4-r3
           echo "== 清理 beta5 残留 =="
-          gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r n; do
+          gh release view "$TAG" --json assets --jq '.assets[].name' > /tmp/assets.txt
+          while read -r n; do
             case "$n" in
               *beta5*|*26.307*) echo "  delete $n"; gh release delete-asset "$TAG" "$n" -y || true ;;
               *) echo "  keep   $n" ;;
             esac
-          done
+          done < /tmp/assets.txt
           echo "== 上传 beta4-r3 =="
-          for f in "$SRC"/*.run "$SRC"/*.apk; do
+          for f in $SRC/*.run $SRC/*.apk; do
             echo "  upload $(basename "$f")"
             gh release upload "$TAG" "$f" --clobber
           done
