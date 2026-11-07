@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "source_repo": "xiealon/ImmortalWrt-ImageBuilder",
+  "source_ref": "master",
+  "source_sha": "3c6213de7887284e74a4de58e44140dce7ff2304",
+  "source_short": "3c6213d",
+  "prepare_script_sha256": "0df4259604922afed978595dc1f4c6cd4c391608c09f325e215477d24fd90feb",
+  "rootfs_skel_sha256": "9f2c312b70f6026a2e318168294245e09a4bf75b5dede51c09614dcd0d1bce1f",
+  "net_conf": "ADDRESS=10.1.0.10/24 GATEWAY=10.1.0.1 DNS=10.1.0.1 ",
+  "crowdsec_version": "1.8.1",
+  "crowdsec_version_requested": "",
+  "crowdsec_deb": "/tmp/lxc-crowdsec-minimal/crowdsec_1.8.1_amd64.deb",
+  "busybox_url": "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox",
+  "tarball_name": "lxc-crowdsec.tar.gz",
+  "tarball_sha256": "70f9a9bd6c2d7e5be746195ca03b5253bdb44e914071ac708c801869617c03bc",
+  "tarball_toc_sha256": "9ca4969e08bafe5084b3f2da3d0702b507739f79b650caf859bb50f8b5e6426f",
+  "tarball_size": 111841547,
+  "tarball_entries": 580,
+  "built_at": "2026-10-24T22:18:44Z",
+  "runner": "Linux-X64",
+  "workflow_run": "https://github.com/xiealon/CloudRunFilesBuilder/actions/runs/40137939975"
+}
