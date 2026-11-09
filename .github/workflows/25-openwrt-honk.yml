@@ -1,17 +1,14 @@
 #=================================================
 # honk（OpenWrt 25.12 / apk）→ 自解压 .run
 #
-# 与 25-openwrt-daede.yml 同一套骨架，差异只在数据来源：
+# 与 25-openwrt-daede.yml 同一套框架，差异只在数据来源：
 #   daede：curl GitHub Release API → jq 解析 → 下载（kenzok8/openwrt-daede）
-#   honk ：feed 没有 GitHub Release 产物，apk 只在 daeuniverse apk 源里；
-#          该源开了目录浏览，直接抓目录 HTML 拿文件名，版本自动跟随上游。
+#   honk ：curl kenzok8/openwrt-honk 的 Release API，只取 2 个 apk：
+#          honk-<ver>-<ARCH_PACKAGES>.apk            （约 12.4 MB）
+#          luci-app-honk-<ver>-<ARCH_PACKAGES>.apk   （约 1.4 MB，含 doona 面板 3.8 MB）
 #
-# 实测（2026-11-02）三个架构各 5 个包、共 15 个：
-#   honk-0.1.0_beta4-r3.apk                     16.2 MB / 15.5 MB / 15.5 MB
-#   luci-app-honk-26.303.60580~1046d3c.apk       2734 B（三架构同）
-#   luci-lib-daeuniverse-26.303.64947~503cdb1.apk 10646 B
-#   luci-i18n-daeuniverse-zh-cn-26.303...apk     2319 B
-#   vmlinux-btf-builtin-1-r1.apk                  972 B（只做 BTF 哨兵检查）
+# 三个架构各 2 个包、共 6 个：x86_64 / aarch64_generic / aarch64_cortex-a53。
+# 架构名按 ARCH_PACKAGES 全名匹配，不要按 aarch64 子串。
 #=================================================
 
 name: Build 25.12 openwrt-honk
@@ -73,7 +70,7 @@ jobs:
           apk add --allow-untrusted *.apk
 
           echo ""
-          echo "✅ 已安装：honk / luci-app-honk / luci-lib-daeuniverse / 中文包 / vmlinux-btf-builtin"
+          echo "✅ 已安装：honk / luci-app-honk（含 doona 面板）"
           echo ""
           echo "默认不启动。启用方式："
           echo "  uci set honk.config.enabled=1"
