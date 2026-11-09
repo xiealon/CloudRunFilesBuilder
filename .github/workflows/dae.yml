@@ -51,7 +51,7 @@ jobs:
 
           # 打包两个平台
           for PLATFORM in x86_64 aarch64_generic aarch64_cortex-a53; do
-            makeself "$PLATFORM" "output/luci-app-dae-${VERSION}_${PLATFORM}.run" \
+            makeself "$PLATFORM" "output/dae_${PLATFORM}.run" \
               "dae ${PLATFORM} Installer v${VERSION}" ./install.sh
           done
 
@@ -62,15 +62,20 @@ jobs:
             version=${version%%~*}
             echo "VERSION_CLEAN=$version" >> $GITHUB_ENV
             echo "cleaned_version=$version" >> $GITHUB_OUTPUT
-
-
-      - name: 📤 上传 .run 文件到 release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: "dae-${{ steps.clean_version.outputs.cleaned_version }}"
-          name: "dae-${{ steps.clean_version.outputs.cleaned_version }}"
-          body_path: ${{ github.workspace }}/info/dae.md
-          files: output/*.run
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to extra-ipk (fixed filenames, overwrite)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          R="$GITHUB_REPOSITORY"
+          TAG=extra-ipk
+          if ! gh release view "$TAG" -R "$R" >/dev/null 2>&1; then
+            gh release create "$TAG" -R "$R" \
+              --title "Extra Packages extra-ipk (fixed filenames)" \
+              --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" \
+              --latest=false
+          fi
+          gh api -X PATCH "repos/$R/releases/tags/$TAG" -f make_latest=false >/dev/null || true
+          gh release upload "$TAG" output/dae_x86_64.run output/dae_aarch64_generic.run output/dae_aarch64_cortex-a53.run -R "$R" --clobber
+          echo "### $TAG" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$R/releases/tags/$TAG" --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
