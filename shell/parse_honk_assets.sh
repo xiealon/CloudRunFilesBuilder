@@ -8,10 +8,12 @@
 #   他的 DEPENDS 也不绑 vmlinux-btf-builtin —— doona 缺件由 control.sh 启动时
 #   自己判，缺 BTF 也由 control.sh 报错，不再需要占位包维持依赖链。
 #
-# 架构映射（kenzok8 只出 x86_64 / aarch64 / armv7 三种）：
+# 架构映射：kenzok8 按 ARCH_PACKAGES 全名出包，正好与我们的三个目标对齐
 #   x86_64             -> x86_64
-#   aarch64_generic    -> aarch64
-#   aarch64_cortex-a53 -> aarch64
+#   aarch64_generic    -> aarch64_generic
+#   aarch64_cortex-a53 -> aarch64_cortex-a53
+# （另有 aarch64_cortex-a72 / aarch64_cortex-a76 / arm_cortex-a7_neon-vfpv4
+#   / arm_cortex-a9，本 workflow 不用）
 set -euo pipefail
 
 REPO="${HONK_REPO:-kenzok8/openwrt-honk}"
@@ -63,11 +65,11 @@ HONK_X86="$(pick honk x86_64)"
 emit X86_HONK_URL          "$HONK_X86"
 emit X86_LUCI_APP_HONK_URL "$(pick luci-app-honk x86_64)"
 
-emit ARM_GENERIC_HONK_URL          "$(pick honk aarch64)"
-emit ARM_GENERIC_LUCI_APP_HONK_URL "$(pick luci-app-honk aarch64)"
+emit ARM_GENERIC_HONK_URL          "$(pick honk aarch64_generic)"
+emit ARM_GENERIC_LUCI_APP_HONK_URL "$(pick luci-app-honk aarch64_generic)"
 
-emit ARM_A53_HONK_URL              "$(pick honk aarch64)"
-emit ARM_A53_LUCI_APP_HONK_URL     "$(pick luci-app-honk aarch64)"
+emit ARM_A53_HONK_URL              "$(pick honk aarch64_cortex-a53)"
+emit ARM_A53_LUCI_APP_HONK_URL     "$(pick luci-app-honk aarch64_cortex-a53)"
 
 VERSION="$(basename "$HONK_X86" | sed -e 's/^honk-//' -e 's/-x86_64\.apk$//')"
 echo "VERSION=$VERSION" >> "$ENVF"
