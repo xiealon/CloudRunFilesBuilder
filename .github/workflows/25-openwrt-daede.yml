@@ -15,6 +15,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    # 【2026-11-09】只 Release 需要写 contents；默认 token 只有只读权限，
+    # 不声明这段，最后一步上传会 403 "Resource not accessible by integration"。
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
