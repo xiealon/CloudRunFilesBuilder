@@ -59,42 +59,30 @@ jobs:
           mv arm64 makeself/
           mv arm64-a53 makeself/
 
-      - name: Create self-extracting packages
+      - name: Create self-extracting packages (fixed filenames)
         run: |
           cd makeself
-          ./makeself.sh x86/ openwrt-daede_${VERSION}_x86_64.run "by github action" ./install.sh
-          ./makeself.sh arm64/ openwrt-daede_${VERSION}_aarch64_generic.run "by github action" ./install.sh
-          ./makeself.sh arm64-a53/ openwrt-daede_${VERSION}_aarch64_cortex-a53.run "by github action" ./install.sh
+          ./makeself.sh x86/       openwrt-daede_x86_64.run          "openwrt-daede 24.10 x86_64" ./install.sh
+          ./makeself.sh arm64/     openwrt-daede_aarch64_generic.run "openwrt-daede 24.10 aarch64_generic" ./install.sh
+          ./makeself.sh arm64-a53/ openwrt-daede_aarch64_cortex-a53.run "openwrt-daede 24.10 aarch64_cortex-a53" ./install.sh
 
       - name: Check file sizes
         run: |
           ls -lh makeself/openwrt-daede_*.run
-
-      - name: Preparing release name
-        run: |
-          release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
-          echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
-
-
-      - name: Set tag name
-        id: vars
-        run: |
-          TODAY=$(date -u -d '+8 hour' +'%Y-%m-%d')
-          echo "tag_name=$TODAY" >> $GITHUB_ENV
-          
-      - name: Upload run files as release assets
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ env.tag_name }}
-          name: "Daily Build - ${{ env.tag_name }}"
-          files: makeself/*.run
-          token: ${{ secrets.GITHUB_TOKEN }}
-          body: |
-             <p align="left">
-              <img src="https://img.shields.io/github/downloads/wkccd/CloudRunFilesBuilder/${{ env.tag_name }}/total?style=for-the-badge&label=%E4%BB%8A%E6%97%A5%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0&labelColor=blue&color=black"/>
-              <a href="https://wkdaily.cpolar.cn/archives/1">
-                <img src="https://img.shields.io/badge/可套用国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge"/>
-              </a>
-             </p>
+      - name: Publish to extra-ipk (fixed filenames, overwrite)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          R="$GITHUB_REPOSITORY"
+          TAG=extra-ipk
+          if ! gh release view "$TAG" -R "$R" >/dev/null 2>&1; then
+            gh release create "$TAG" -R "$R" \
+              --title "Extra Packages extra-ipk (fixed filenames)" \
+              --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" \
+              --latest=false
+          fi
+          gh api -X PATCH "repos/$R/releases/tags/$TAG" -f make_latest=false >/dev/null || true
+          gh release upload "$TAG" makeself/openwrt-daede_x86_64.run makeself/openwrt-daede_aarch64_generic.run makeself/openwrt-daede_aarch64_cortex-a53.run -R "$R" --clobber
+          echo "### $TAG" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$R/releases/tags/$TAG" --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
