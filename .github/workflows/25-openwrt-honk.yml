@@ -19,10 +19,10 @@ name: Build 25.12 openwrt-honk
 on:
   workflow_dispatch:
     inputs:
-      feed:
-        description: 'apk 源根地址（末尾不带斜杠）'
+      tag:
+        description: 'kenzok8/openwrt-honk 的 release tag（留空 = latest）'
         required: false
-        default: 'https://openwrt.daeuniverse.org/25.12/packages'
+        default: ''
       tag_name:
         description: 'Release tag（留空 = honk-apk，固定覆盖）'
         required: false
@@ -43,10 +43,10 @@ jobs:
       - name: Clone makeself repository
         run: git clone --depth 1 https://github.com/megastep/makeself.git
 
-      - name: Parse apk filenames from feed
+      - name: Parse apk filenames from kenzok8 release
         id: parse
         env:
-          FEED: ${{ inputs.feed }}
+          HONK_TAG: ${{ inputs.tag }}
         run: bash shell/parse_honk_assets.sh
 
       - name: Download apk files
@@ -134,15 +134,12 @@ jobs:
             **honk ${{ env.VERSION }}** — OpenWrt 25.12 自解压安装包
 
             **两类产物**：`25-openwrt-honk-*.run` 三架构自解压包（路由器上直接跑）；
-            `honk-*.apk` 等 5 个 x86_64 散装 apk（给 ImageBuilder 构建时装进固件）。
+            `honk-*.apk` + `luci-app-honk-*.apk` 两个 x86_64 散装 apk（给 ImageBuilder 构建时装进固件）。
 
             | 包 | 说明 |
             |---|---|
             | honk | eBPF 透明代理引擎（dae 的独立实现） |
-            | luci-app-honk | LuCI 界面（服务 → Honk） |
-            | luci-lib-daeuniverse | LuCI 依赖库 |
-            | luci-i18n-daeuniverse-zh-cn | 中文翻译 |
-            | vmlinux-btf-builtin | BTF 哨兵（1 B，装前检查 `/sys/kernel/btf/vmlinux`） |
+            | luci-app-honk | LuCI 界面 + 内置 doona 面板（3.8 MB 静态文件） |
 
             **要求**：Linux >= 6.12 且 `CONFIG_DEBUG_INFO_BTF=y`
 
