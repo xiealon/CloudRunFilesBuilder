@@ -24,6 +24,10 @@ on:
         description: 'Release tag（留空 = honk-apk，固定覆盖）'
         required: false
         default: ''
+      repo:
+        description: '从哪个仓库的 release 取 apk（留空 = kenzok8/openwrt-honk）'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -44,6 +48,7 @@ jobs:
         id: parse
         env:
           HONK_TAG: ${{ inputs.tag }}
+          HONK_REPO: ${{ inputs.repo }}
         run: bash shell/parse_honk_assets.sh
 
       - name: Download apk files
