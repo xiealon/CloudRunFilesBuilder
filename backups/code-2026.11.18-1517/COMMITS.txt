@@ -1,4 +1,0 @@
-ImmortalWrt-ImageBuilder-25.12-daed  HEAD=cc2876e  2026-11-18T15:17:58Z
-ImmortalWrt-ImageBuilder-25.12-honk  HEAD=704b28a  2026-11-18T15:17:58Z
-ImmortalWrt-ImageBuilder-25.12  HEAD=7309715  2026-11-18T15:17:59Z
-ImmortalWrt-ImageBuilder-24.10  HEAD=fff482b  2026-11-18T15:17:59Z
