@@ -2,6 +2,10 @@ name: backup code to Backup branch
 # 在 Actions 里把四个固件仓库 + CRFB 自己的当前 HEAD 全量拷到 Backup 分支的 backups/code-<日期>/
 # 并清掉更早的 backups/code-* 。全程 GitHub 内部，不经过本机上传。
 on:
+  # 【2026-11-20 用户定】每两周自动备份一次：每月 1 号、15 号 01:00（北京）= 17:00 UTC。
+  # GitHub 的 cron 不支持真正的"每 14 天"，用 1/15 号最接近且日期固定（避免 */14 的漂移）。
+  schedule:
+    - cron: "0 17 1,15 * *"
   workflow_dispatch:
     inputs:
       dirname:
