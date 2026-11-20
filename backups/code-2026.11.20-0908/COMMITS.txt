@@ -1,5 +1,0 @@
-ImmortalWrt-ImageBuilder-25.12-daed  HEAD=21c5f43  2026-11-20T09:08:24Z
-ImmortalWrt-ImageBuilder-25.12-honk  HEAD=7302d91  2026-11-20T09:08:25Z
-ImmortalWrt-ImageBuilder-25.12  HEAD=4f21d68  2026-11-20T09:08:25Z
-ImmortalWrt-ImageBuilder-24.10  HEAD=ddbf50a  2026-11-20T09:08:25Z
-CloudRunFilesBuilder  HEAD=0ae85e8  2026-11-20T09:08:25Z

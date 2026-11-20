@@ -12,18 +12,15 @@ CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-rtp2httpd luci-i18n-rtp2httpd-zh-cn"
 #   穿透   → tailscale + cloudflared + nps（留这三个，见下方 zerotier/xfrpc/eoip/ngrokc 各处说明）
 # 当日 201 实测：/etc/lucky 目录 0 个文件、option enabled '0' —— 装了从未配置，
 # 留着只是多一个从没验证过的黑盒。cp /etc/config/lucky 里 configdir 指向它。
-# daed（eBPF 代理）：官方线装 daed，不装 honk。
-# 【2026-11-10】用户定：官方 25.12 线去掉 honk、改用新版 daed。
-# 包来自 kenzok8/openwrt-daede 的 Release（build25.sh 的 daed 段取 3 个 apk 放进
-# packages/，当本地包装进固件），版本随 Release tag 走，不在 apk 源里：
-#   daed-2026.11.09-r1-x86_64.apk            25,992,538 B  主程序，内嵌 Web UI
-#   luci-app-daede-1.15-r13-x86_64.apk           99,180 B  LuCI 界面（PKGARCH:=all）
-#   vmlinux-btf-6.12.103-r1-x86_64.apk        1,676,424 B  BTF 包，与 25.12 内核同版
-# vmlinux-btf 必须显式列出：daed 的 Makefile 里有 +DAED_USE_VMLINUX_BTF:vmlinux-btf
-# 这条依赖，缺包在 make image 阶段直接报找不到；而且探针要从 /rom/root/apk-cache
-# 把它装回来 —— 不进包库就是空头支票。版本必须等于目标内核版本，否则 daed 的
-# CO-RE eBPF 校验过不去（历史上 6.12.79 那份就是这么被排除掉的）。
-CUSTOM_PACKAGES="$CUSTOM_PACKAGES daed luci-app-daede vmlinux-btf"
+# honk：25.12 上替代 daed 的 eBPF 代理引擎（硬要求内核 6.12+）。
+# doona 管理界面内嵌在 honk-core 里，访问 http://<LAN IP>:9527/（必须用 IP，不认主机名）。
+# luci-app-honk 只负责 Services → honk 的启停/升级，节点与路由仍在 doona 里配。
+# 包来自 xiealon/CloudRunFilesBuilder 的 honk-apk Release（镜像自 kenzok8/openwrt-honk），
+# 由 build25.sh 下到 packages/，所以这里不带 @tag —— 走的是本地包，不是 apk 源。
+# 【2026-11-10】从五件套缩到两件套：kenzok8 的 luci-app-honk 自带 doona 面板和
+# honk.zh-cn.lmo 翻译，不再需要 luci-lib-daeuniverse / luci-i18n-daeuniverse-zh-cn；
+# 他的 DEPENDS 也不绑 vmlinux-btf-builtin，BTF 缺失由 control.sh 启动时报错。
+CUSTOM_PACKAGES="$CUSTOM_PACKAGES honk luci-app-honk"
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES geoview sing-box luci-compat kmod-tun kmod-inet-diag kmod-nft-tproxy kmod-nft-socket bash curl lua unzip"
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-openclash"
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-ssr-plus luci-i18n-ssr-plus-zh-cn xray-core"
@@ -143,6 +140,9 @@ CUSTOM_PACKAGES="$CUSTOM_PACKAGES smartdns"
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-smartdns"
 
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES dockerd luci-app-dockerman luci-i18n-dockerman-zh-cn"
+# 【2026-11-20 用户定】luci-app-store（商店）固定随固件走 —— 与 lxc / docker 同一档，
+# 不再提供构建开关（workflow 里的「Enable Store」已删除，改由构建步骤无条件追加一行）。
+# 想卸就在设备上 apk del luci-app-store，包库里有 apk，开机补充组也认得它。
 
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES crowdsec-firewall-bouncer"
 # nftables-json /usr/sbin/nft 归属这个包（2026-10-27 真机核实）：bouncer 的 deny_action=drop
@@ -169,19 +169,9 @@ CUSTOM_PACKAGES="$CUSTOM_PACKAGES coreutils-timeout"
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES kmod-veth kmod-ikconfig"
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES kmod-br-netfilter"
 # acpi_call: manual EC fan-step control for Panasonic CFSV7-3 (added 2026-11-05).
-# 【2026-11-09】kmod-acpi-call / kmod-hwmon-pwmfan / kmod-gpio-pwm 主线不再收。
-# 实测（2026-11-09，官方源 25.12.2 x86-64）：
-#   targets/x86/64/kmods/6.12.103-1-0413601b1c3f0490e17f340fe09229ea/ 共 1,199 个 kmod，
-#   这三个一个都没有 —— 名字里带 pwm 的 0 个，带 acpi-call 的 0 个。
-#   run 包（packages/*.apk，69 个）里也没带。
-#   于是 make image 在 package_install 阶段直接退出：
-#     kmod-acpi-call (no such package)
-#     kmod-hwmon-pwmfan (no such package)
-#   原来那句注释「apk already ships in packages tar」是错的：那是 25.12-honk 线
-#   自建内核才编的模块，主线用官方 ImageBuilder，内核模块只能来自官方 kmods 库。
-# 需要这三个（PWM 风扇 / acpi_call）只能切 25.12-honk 或 25.12-daed 线自建内核。
-# CUSTOM_PACKAGES="$CUSTOM_PACKAGES kmod-acpi-call"
-# CUSTOM_PACKAGES="$CUSTOM_PACKAGES kmod-hwmon-pwmfan kmod-gpio-pwm"
+# apk already ships in packages tar (kmod-acpi-call-6.12.103.1.0-r1.apk); list it here only.
+CUSTOM_PACKAGES="$CUSTOM_PACKAGES kmod-acpi-call"
+CUSTOM_PACKAGES="$CUSTOM_PACKAGES kmod-hwmon-pwmfan kmod-gpio-pwm"
 
 CUSTOM_PACKAGES="$CUSTOM_PACKAGES glib2 crconf davici swanmon kmod-crypto-chacha20poly1305"
 # 【2026-11-19】用户定：这些工具都要有 LuCI 界面。

@@ -1,4 +1,7 @@
 name: Build 25.12.x x86-64
+# trigger-index-rebuild: 2026-11-09 仓库由 IMMORTALWRT-HONK 改名为 25.12 后
+# GitHub 未重建 workflow 索引（/actions/workflows 返回 total=0），
+# 改动本文件一次可强制重新扫描。功能零影响。
 
 on:
   workflow_dispatch:
@@ -80,11 +83,11 @@ on:
           - '64G盘→rootfs 50G'
           - '128G盘→rootfs 108G'
           - '256G盘→rootfs 224G'
-      Enable Store:
-        description: "集成 store 商店"
-        required: false
-        type: boolean
-        default: true
+      # 【2026-11-20 用户定】原来的「Enable Store」开关已删除。
+      # store 跟 lxc / docker 一样是固件的一部分，不给这个组合留门 —— 理由与下面
+      # Crowdsec 那条完全相同：选 false 会产出一个「界面上没有商店、但白名单/脚本/包库
+      # 全都按有商店写好」的固件，属于最难查的那种不一致。想卸就直接在设备上 apk del，
+      # 包库里有 apk，开机补充组也能装回。
       # 【v.107.7】原来这里有个 Include Crowdsec=yes/no 开关，已删除。
       # 容器是固件的一部分，不是可选件。留开关的后果：选 no 时 185MB 镜像不进固件，
       # 而 Router IP / 掩码 / 网关 / DNS 照样写进 custom/*.txt、由开机引导的
@@ -152,16 +155,16 @@ jobs:
           done
           echo "==> 可执行位复核（rc.local 必须 -rwxr-xr-x）"
           # 【2026-11-10】拆分后入口变成 bootstrap/bootstrap.sh，原来的
-          # files/usr/sbin/crowdsec-lxc-bootstrap.sh 已删除 —— 这里引用它会让
-          # ls 返回非零、整步在 bash -e 下直接失败。
+          # files/usr/sbin/crowdsec-lxc-bootstrap.sh 已删除 —— 引用它会让
+          # ls 返回非零，整步在 bash -e 下直接失败。
           ls -l "${{ github.workspace }}/files/etc/rc.local" \
                 "${{ github.workspace }}/files/usr/sbin/bootstrap/bootstrap.sh" \
                 "${{ github.workspace }}/files/usr/sbin/crowdsec-guard-watch.sh" \
                 "${{ github.workspace }}/x86-64/build25.sh"
           [ -x "${{ github.workspace }}/files/etc/rc.local" ] \
             || { echo "::error::files/etc/rc.local 仍无执行位，开机不会跑任何引导"; exit 1; }
-          # 拆分出来的三个目录是「自愈的身体」，入口与 guard 的独立触发器
-          # 必须带执行位，否则开机后 guard 调不动、探针 120 秒循环也起不来。
+          [ -x "${{ github.workspace }}/files/etc/rc.local" ] \
+            || { echo "::error::files/etc/rc.local 仍无执行位，开机不会跑任何引导"; exit 1; }
           for _x in files/usr/sbin/bootstrap/bootstrap.sh \
                     files/usr/sbin/crowdsec-guard-watch.sh \
                     files/usr/sbin/smartdns-restore/restore.sh \
@@ -259,14 +262,13 @@ jobs:
           echo "        DNS=[$(tr -d '\r\n' < "$CUSTOM/custom_router_dns.txt")]"
 
 
-      - name: Enable Store Integration
+      - name: Enable Store Integration（固定启用）
         run: |
-          if [ "${{ github.event.inputs['Enable Store'] }}" == "true" ]; then
-            echo 'CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-store"' >> shell/apk-custom-packages.sh
-            echo "✅ 已追加 luci-app-store"
-          else
-            echo "❎ 未启用 luci-app-store"
-          fi
+          # 【2026-11-20 用户定】store 不再给开关：跟 lxc / docker 一样，它是固件的一部分。
+          # 以前选 false 会得到「界面没商店、但白名单/脚本/包库都按有商店写」的固件，
+          # 属于最难查的不一致；想卸就在设备上 apk del，库里和开机补充组都能装回。
+          echo 'CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-store"' >> shell/apk-custom-packages.sh
+          echo "✅ 已追加 luci-app-store（固定启用）"
 
       - name: Lint Shell Scripts
         run: |
