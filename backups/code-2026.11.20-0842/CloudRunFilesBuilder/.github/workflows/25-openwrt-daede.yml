@@ -1,0 +1,92 @@
+#=================================================
+# https://github.com/wukongdaily/RunFilesBuilder
+# Description: Build RunFiles using GitHub Actions
+# Lisence: MIT
+# Author: wukongdaily
+# Blog: wkdaily.cpolar.cn
+#=================================================
+
+
+name: Build 25.12 openwrt-daede
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    # 【2026-11-09】只 Release 需要写 contents；默认 token 只有只读权限，
+    # 不声明这段，最后一步上传会 403 "Resource not accessible by integration"。
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Clone makeself repository
+        run: git clone https://github.com/megastep/makeself.git
+
+      - name: Fetch latest prerelease info
+        id: fetch_release
+        run: |
+          curl -s https://api.github.com/repos/kenzok8/openwrt-daede/releases \
+            | jq 'map(select(.prerelease==false)) | sort_by(.published_at) | last' \
+            > release.json
+
+
+      - name: Parse asset download URLs
+        id: parse_assets
+        run: bash shell/parse_assets25.sh
+         
+      - name: Download apk files
+        run: bash shell/download_apks.sh
+
+      - name: Create install.sh scripts
+        run: |
+          cat <<EOF > x86/install.sh
+          #!/bin/sh
+          apk update
+          if [ $? -ne 0 ]; then
+              echo "update failed。"
+              exit 1
+          fi
+          apk add --allow-untrusted *.apk
+          EOF
+          chmod +x x86/install.sh
+          cp x86/install.sh arm64/install.sh
+          cp x86/install.sh arm64-a53/install.sh
+
+      - name: Move directories to makeself
+        run: |
+          mv x86 makeself/
+          mv arm64 makeself/
+          mv arm64-a53 makeself/
+
+      - name: Create self-extracting packages (fixed filenames)
+        run: |
+          cd makeself
+          ./makeself.sh x86/       openwrt-daede_x86_64.run          "openwrt-daede 25.12 x86_64" ./install.sh
+          ./makeself.sh arm64/     openwrt-daede_aarch64_generic.run "openwrt-daede 25.12 aarch64_generic" ./install.sh
+          ./makeself.sh arm64-a53/ openwrt-daede_aarch64_cortex-a53.run "openwrt-daede 25.12 aarch64_cortex-a53" ./install.sh
+
+      - name: Check file sizes
+        run: |
+          ls -lh makeself/*.run
+      - name: Publish to extra-apk (fixed filenames, overwrite)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          R="$GITHUB_REPOSITORY"
+          TAG=extra-apk
+          if ! gh release view "$TAG" -R "$R" >/dev/null 2>&1; then
+            gh release create "$TAG" -R "$R" \
+              --title "Extra Packages extra-apk (fixed filenames)" \
+              --notes "固定文件名 .run，供 ImmortalWrt-ImageBuilder 直链下载。" \
+              --latest=false
+          fi
+          gh api -X PATCH "repos/$R/releases/tags/$TAG" -f make_latest=false >/dev/null || true
+          gh release upload "$TAG" makeself/openwrt-daede_x86_64.run makeself/openwrt-daede_aarch64_generic.run makeself/openwrt-daede_aarch64_cortex-a53.run -R "$R" --clobber
+          echo "### $TAG" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$R/releases/tags/$TAG" --jq '.assets[] | "| \(.name) | \(.size) |"' >> "$GITHUB_STEP_SUMMARY"
