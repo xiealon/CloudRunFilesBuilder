@@ -27,6 +27,10 @@ on:
         description: 'Release tag（留空 = honk-apk，固定覆盖）'
         required: false
         default: ''
+      honk_tag:
+        description: 'honk 应用 Release tag（如 v2026.11.18.1）；填了就用它里面的 honk/luci-app-honk 覆盖 feed 版本，留空 = 全用 feed'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -51,6 +55,31 @@ jobs:
 
       - name: Download apk files
         run: bash shell/download_honk_apks.sh
+
+      - name: Overlay honk apks from app release
+        if: ${{ inputs.honk_tag != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HONK_TAG: ${{ inputs.honk_tag }}
+        run: |
+          set -euo pipefail
+          # feed 里的 honk/luci-app-honk 是上游版本；这里换成自己编的那一版，
+          # 其余三件（luci-lib-daeuniverse / i18n / vmlinux-btf-builtin）继续用 feed 的。
+          for pair in "x86:x86_64" "arm64:aarch64_generic" "arm64-a53:aarch64_cortex-a53"; do
+            dir="${pair%%:*}"; arch="${pair##*:}"
+            echo "==> $dir <- $arch"
+            rm -f "$dir"/honk-*.apk "$dir"/luci-app-honk-*.apk
+            gh release download "$HONK_TAG" --repo xiealon/kenzok8-honk \
+              --pattern "honk-*-${arch}.apk" --dir "$dir" --clobber
+            gh release download "$HONK_TAG" --repo xiealon/kenzok8-honk \
+              --pattern "luci-app-honk-*-${arch}.apk" --dir "$dir" --clobber
+          done
+          ls -lh x86 arm64 arm64-a53
+          # VERSION 用新 apk 的名字重算（.run 文件名里带它）
+          f="$(basename "$(ls x86/honk-*.apk | head -n1)")"
+          ver="${f#honk-}"; ver="${ver%-x86_64.apk}"
+          echo "VERSION=$ver" >> "$GITHUB_ENV"
+          echo "==> VERSION=$ver"
 
       - name: Create install.sh scripts
         run: |
