@@ -1,0 +1,77 @@
+name: Sync honk apks from app repo
+
+# 为什么需要它：固件 build25.sh 从本仓 honk-apk Release 拉 honk-*.apk / luci-app-honk-*.apk。
+# honk 应用自己的 release.yml 想推 R2 feed 需要 R2 密钥，本仓没有，所以改走这条：
+# runner 直接从 kenzok8-honk 的 Release 下 apk，再覆盖进 honk-apk Release。
+# 全程 GitHub 内部传输，不经过本机。
+on:
+  workflow_dispatch:
+    inputs:
+      src_repo:
+        description: 'honk 应用仓（owner/repo）'
+        required: false
+        default: 'xiealon/kenzok8-honk'
+      src_tag:
+        description: '源 Release tag（如 v2026.11.12.3）'
+        required: true
+      pattern:
+        description: '要同步的资产（空格分隔，支持 shell 通配）'
+        required: false
+        default: 'honk-*-x86_64.apk luci-app-honk-*-x86_64.apk'
+      dst_tag:
+        description: '目标 Release tag（留空 = honk-apk）'
+        required: false
+        default: ''
+
+jobs:
+  sync:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Resolve tags
+        run: |
+          set -euo pipefail
+          echo "DST_TAG=$([ -n "${{ inputs.dst_tag }}" ] && echo "${{ inputs.dst_tag }}" || echo honk-apk)" >> "$GITHUB_ENV"
+          echo "源仓：${{ inputs.src_repo }} @ ${{ inputs.src_tag }}"
+
+      - name: Download apks from source release
+        run: |
+          set -euo pipefail
+          mkdir -p dl
+          for pat in ${{ inputs.pattern }}; do
+            echo "==> 下载 $pat"
+            gh release download "${{ inputs.src_tag }}" \
+              --repo "${{ inputs.src_repo }}" \
+              --pattern "$pat" --dir dl --clobber
+          done
+          echo "---- 下到的文件："
+          ls -lh dl
+          test "$(ls -1 dl/*.apk 2>/dev/null | wc -l)" -gt 0 || { echo "::error::一个 apk 都没下到"; exit 1; }
+
+      - name: Remove stale assets from destination release
+        run: |
+          set -euo pipefail
+          # 只动同名的两类 apk，.run 安装包与其它资产一概不碰
+          gh release view "$DST_TAG" --repo "${{ github.repository }}" \
+            --json assets --jq '.assets[].name' > names.txt || true
+          cat names.txt || true
+          while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            case "$n" in
+              honk-*-x86_64.apk|luci-app-honk-*-x86_64.apk)
+                echo "删除旧资产：$n"
+                gh release delete-asset "$DST_TAG" "$n" --repo "${{ github.repository }}" --yes
+                ;;
+            esac
+          done < names.txt
+
+      - name: Upload new assets
+        run: |
+          set -euo pipefail
+          gh release upload "$DST_TAG" dl/*.apk --repo "${{ github.repository }}" --clobber
+          echo "---- 上传后资产清单："
+          gh release view "$DST_TAG" --repo "${{ github.repository }}" \
+            --json assets --jq '.assets[] | "\(.name)\t\(.size)"'
