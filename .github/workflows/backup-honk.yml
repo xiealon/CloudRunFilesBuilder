@@ -1,0 +1,84 @@
+name: backup honk release to Backup branch
+
+# 把 honk-apk Release 的产物（apk + 3 个 .run）镜像到 Backup 分支 backups/honk/，
+# 跟 backup-crowdsec.yml 同一套做法：Release 资产删了就没了，备份分支留一份。
+# 触发：① 手动；② "Build 25.12 openwrt-honk" 成功后自动跑。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag（留空 = honk-apk）'
+        required: false
+        default: ''
+  workflow_run:
+    workflows: ["Build 25.12 openwrt-honk"]
+    types: [completed]
+
+jobs:
+  backup:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout Backup branch
+        uses: actions/checkout@v7
+        with:
+          ref: Backup
+          fetch-depth: 0
+
+      - name: Resolve tag
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="honk-apk"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "备份 Release：$TAG"
+
+      - name: Download release assets
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dl
+          gh release download "$TAG" -R "${{ github.repository }}" -D /tmp/dl --clobber
+          ls -lh /tmp/dl
+          test "$(ls -1 /tmp/dl | wc -l)" -gt 0 || { echo "::error::Release 里没资产"; exit 1; }
+
+      - name: Refresh backups/honk
+        run: |
+          set -euo pipefail
+          rm -rf backups/honk
+          mkdir -p backups/honk
+          cp /tmp/dl/* backups/honk/
+          cd backups/honk
+          sha256sum ./* > SHA256SUMS
+          {
+            echo "# honk 发布产物备份"
+            echo
+            echo "- 来源：\`${{ github.repository }}\` 的 Release \`$TAG\`"
+            echo "- 备份时间：$(TZ=Asia/Shanghai '+%F %T')"
+            echo "- 内容：3 个 .run 自解压包（x86_64 / aarch64_generic / aarch64_cortex-a53）+ x86_64 散装 apk"
+            echo
+            echo "| 文件 | 大小 |"
+            echo "|---|---|"
+            for f in *; do
+              [ "$f" = "SHA256SUMS" ] && continue
+              [ "$f" = "README.md" ] && continue
+              echo "| $f | $(stat -c%s "$f") B |"
+            done
+          } > README.md
+          ls -lh
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A backups/honk
+          if git diff --cached --quiet; then
+            echo "==> 内容没变化，跳过提交"
+            exit 0
+          fi
+          git commit -m "backup(honk): $TAG（x86_64 apk + 3 个 .run）"
+          git push origin HEAD:Backup
