@@ -26,7 +26,7 @@ jobs:
           ref: Backup
           fetch-depth: 1
 
-      - name: 备份四个仓库
+      - name: 备份
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -39,10 +39,8 @@ jobs:
 
           mkdir -p "backups/$name"
           # 【2026-11-20 用户定】把 CRFB 自己（工作流/脚本/配置）也一起备份，
-          # 否则只备了四个固件仓库，工作流改动（如 extras.yml 那次 404 修复）没有快照。
-          for repo in ImmortalWrt-ImageBuilder-25.12-daed \
-                      ImmortalWrt-ImageBuilder-25.12-honk \
-                      ImmortalWrt-ImageBuilder-25.12 \
+          # 否则只备了两个固件仓库，工作流改动（如 extras.yml 那次 404 修复）没有快照。
+          for repo in ImmortalWrt-ImageBuilder-25.12 \
                       ImmortalWrt-ImageBuilder-24.10 \
                       CloudRunFilesBuilder; do
             echo "==> $repo"
@@ -62,5 +60,5 @@ jobs:
           if git diff --cached --quiet; then
             echo "无变化"; exit 0
           fi
-          git commit -m "backup(code): $name（四个固件仓库 + CRFB 全量代码）"
+          git commit -m "backup(code): $name（两个固件仓库 + CRFB 全量代码）"
           git push origin HEAD:Backup
