@@ -1,0 +1,64 @@
+name: backup code to Backup branch
+# 在 Actions 里把四个固件仓库 + CRFB 自己的当前 HEAD 全量拷到 Backup 分支的 backups/code-<日期>/
+# 并清掉更早的 backups/code-* 。全程 GitHub 内部，不经过本机上传。
+on:
+  # 【2026-11-20 用户定】每两周自动备份一次：每月 1 号、15 号 01:00（北京）= 17:00 UTC。
+  # GitHub 的 cron 不支持真正的"每 14 天"，用 1/15 号最接近且日期固定（避免 */14 的漂移）。
+  schedule:
+    - cron: "0 17 1,15 * *"
+  workflow_dispatch:
+    inputs:
+      dirname:
+        description: '备份目录名（默认 code-<YYYY.MM.DD-HHMM>）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出 Backup 分支
+        uses: actions/checkout@v6
+        with:
+          ref: Backup
+          fetch-depth: 1
+
+      - name: 备份
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          name="${{ github.event.inputs.dirname }}"
+          [ -n "$name" ] || name="code-$(date -u +%Y.%m.%d-%H%M)"
+          echo "目标目录: backups/$name"
+
+          rm -rf backups/code-* || true
+
+          mkdir -p "backups/$name"
+          # 【2026-11-20 用户定】把 CRFB 自己（工作流/脚本/配置）也一起备份，
+          # 否则只备了两个固件仓库，工作流改动（如 extras.yml 那次 404 修复）没有快照。
+          for repo in ImmortalWrt-ImageBuilder-25.12 \
+                      ImmortalWrt-ImageBuilder-24.10 \
+                      CloudRunFilesBuilder; do
+            echo "==> $repo"
+            git clone --depth=1 --quiet \
+              "https://x-access-token:${TOKEN}@github.com/xiealon/${repo}.git" "/tmp/$repo"
+            mkdir -p "backups/$name/$repo"
+            tar -C "/tmp/$repo" --exclude=.git -cf - . | tar -C "backups/$name/$repo" -xf -
+            head=$(git -C "/tmp/$repo" rev-parse --short HEAD)
+            printf '%s\n' "$repo  HEAD=$head  $(date -u +%FT%TZ)" >> "backups/$name/COMMITS.txt"
+            echo "    $(find "backups/$name/$repo" -type f | wc -l) 个文件  HEAD=$head"
+          done
+
+          du -sh "backups/$name"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A backups
+          if git diff --cached --quiet; then
+            echo "无变化"; exit 0
+          fi
+          git commit -m "backup(code): $name（两个固件仓库 + CRFB 全量代码）"
+          git push origin HEAD:Backup
